@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
-	//"encoding/json"
+	"encoding/json"
 	//"io/ioutil"
 	"os"
 	//"github.com/HouzuoGuo/tiedot/db"
@@ -20,7 +20,7 @@ type ChordNode struct{
 	HashID string
 	Bootstrap string     // Another node it knows about to join the ring
 	Finger map[int]string
-	m int
+	M int
 }
 
 type Request struct{
@@ -48,7 +48,7 @@ func createConnection(identifer string) (encoder *json.Encoder, decoder *json.De
 	
 	conn, err := net.Dial("tcp", "localhost:1000"+identifer)
 	if err != nil {
-		log.Fatal("Connection error", err)
+		fmt.Println("Connection error", err)
 	}
 	e := json.NewEncoder(conn)
 	d := json.NewDecoder(conn)
@@ -59,10 +59,10 @@ func createConnection(identifer string) (encoder *json.Encoder, decoder *json.De
 
 func join(node *ChordNode)(){
 	encoder, decoder := createConnection(node.Bootstrap)
-	m := Request{"find_successor", node.Identifer}
+	m := Request{"find_successor", node.Identifier}
 	encoder.Encode(m)
 
-	res := new(Respose)
+	res := new(Response)
 	decoder.Decode(&res)
 	fmt.Println("Recieved: %+v", res)
 	
@@ -72,13 +72,13 @@ func find_successor(node *ChordNode, req *Request, encoder *json.Encoder){
 	//return node.Finger[1]?
 
 	//find closest, ask them where its at
-	target := req.Params
-	target_val := strconv.Atoi(target)
+	target := req.Params.(string)
+	target_val, _ := strconv.Atoi(target)
 	
 	previous_finger := -1
 	current_finger := -1
 	successor := -1
-	for i :=node.m; i >= 0 ; i-- {
+	for i :=node.M; i >= 0 ; i-- {
 		current_finger = strconv.Atoi(node.Finger[math.Pow(2,i)])
 		if target_val == current_finger {
 			//This is where the target should be at
@@ -95,7 +95,7 @@ func find_successor(node *ChordNode, req *Request, encoder *json.Encoder){
 	//Guessing here
 	if successor == -1 {
 		//Assign highest m value to look at
-		successor = node.Finger[math.Pow(2,node.m)]
+		successor = node.Finger[math.Pow(2,node.M)]
 	}
 	
 
@@ -144,7 +144,7 @@ func main() {
 		node.Bootstrap = "-1"
 	}
 
-	node.m := 3 // m-bit Key Space
+	node.M = 3 // m-bit Key Space
 	node.HashID = node.Identifier
 	//node.Successor = node.Bootstrap
 	config.Port = "1000" + node.Identifier
@@ -158,6 +158,7 @@ func main() {
 		for i := 1; i < m; i++ {
 			node.Finger[math.Pow(2,i)] = node.Identifier 
 		}
+	}
 
 			
 	
@@ -175,4 +176,5 @@ func main() {
 		}
 		go handleConnection(node, conn) 
 	}
+	
 }
