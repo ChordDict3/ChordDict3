@@ -14,13 +14,14 @@ import (
 
 
 type ChordNode struct{
-	Identifier string
-	Successor string
-	Predecessor string
-	HashID string
-	Bootstrap string     // Another node it knows about to join the ring
-	Finger map[int]string
+	Identifier int
+	Successor int
+	Predecessor int
+	HashID int
+	Bootstrap int     // Another node it knows about to join the ring
+	Finger map[int]int
 	M int
+	Keys []int
 }
 
 type Request struct{
@@ -42,11 +43,9 @@ type TestConfiguration struct{
 
 }
 
-func createConnection(identifer string) (encoder *json.Encoder, decoder *json.Decoder){
-
-	//TODO - either have method for identifer -> ip:port, or track this from beginning
+func createConnection(identifer int) (encoder *json.Encoder, decoder *json.Decoder){
 	
-	conn, err := net.Dial("tcp", "localhost:1000"+identifer)
+	conn, err := net.Dial("tcp", "localhost:1000"+ strconv.Itoa(identifer))
 	if err != nil {
 		fmt.Println("Connection error", err)
 	}
@@ -59,47 +58,68 @@ func createConnection(identifer string) (encoder *json.Encoder, decoder *json.De
 
 func join(node *ChordNode)(){
 	encoder, decoder := createConnection(node.Bootstrap)
-	m := Request{"find_successor", node.Identifier}
+	id := strconv.Itoa(node.Identifier)
+	m := Request{"find_predecessor", id}
 	encoder.Encode(m)
 
 	res := new(Response)
 	decoder.Decode(&res)
-	fmt.Println("Recieved: %+v", res)
+	fmt.Println("Recieved: ", res)
 	
 }
 
-func find_successor(node *ChordNode, req *Request, encoder *json.Encoder){
-	//return node.Finger[1]?
+func find_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
 
-	//find closest, ask them where its at
-	target := req.Params.(string)
-	target_val, _ := strconv.Atoi(target)
+	fmt.Println("here")
 	
-	previous_finger := -1
-	current_finger := -1
-	successor := -1
-	for i :=node.M; i >= 0 ; i-- {
-		current_finger = strconv.Atoi(node.Finger[math.Pow(2,i)])
-		if target_val == current_finger {
-			//This is where the target should be at
-			successor = current_finger
-		}else if previous_finger != -1 {
-			if target_val > current_finger && target_val < previous_finger {
-				successor = previous_finger
-				break
+	target, _ := strconv.Atoi(req.Params.(string))
+
+	if (target == node.Identifier) || (target > node.Identifier && target < node.Successor) || node.Identifier == node.Successor {
+		m := Response{node.Identifier, nil}
+		fmt.Println("Response to ",target," ",m)
+		encoder.Encode(m)
+	} else {
+			
+		for i :=0; i > node.M ; i++ {
+			current_finger := node.Finger[node.Identifier + powerof(2,i) % powerof(2,node.M)]
+			lower_interval := node.Identifier + powerof(2,i) % powerof(2,node.M)
+			upper_interval := node.Identifier + powerof(2,i+1) % powerof(2,node.M)
+			
+			if i == target {
+				m := Response{current_finger, nil}
+				fmt.Println("Response to ",target," ", m)
+				encoder.Encode(m)
+				return
+			}else{
+				//Is target in interval for this finger entry
+				if target > lower_interval && target < upper_interval {
+					m := Response{current_finger, nil}
+					fmt.Println("Response to ",target, " ",m)
+					encoder.Encode(m)
+					return
+				}
+				
 			}
+			
+			
 		}
-		previous_finger = current_finger
-	}
+		
 
-	//Guessing here
-	if successor == -1 {
-		//Assign highest m value to look at
-		successor = node.Finger[math.Pow(2,node.M)]
 	}
 	
 
+}
+
+func find_successor(node *ChordNode, req *Request, encoder *json.Encoder){
+	fmt.Println("not implemented")
+
+
 	
+}
+
+func powerof(x int, y int)(val int){
+	val = int(math.Pow(float64(x),float64(y)))
+	return val
 }
 
 func readTestConfig()(config *TestConfiguration){
@@ -118,10 +138,15 @@ func handleConnection(node *ChordNode, conn net.Conn){
 	req := new(Request)
 	decoder.Decode(&req)
 
+	fmt.Println(req)
+	
 	switch req.Method {
 	case "find_successor" :
 		find_successor(node, req, encoder)
+	case "find_predecessor" :
+		find_predecessor(node, req, encoder)
 	}
+
 		
 
 }
@@ -133,34 +158,47 @@ func main() {
 	node := new(ChordNode)
 	config := readTestConfig()
 
-	// For early development, the chord node listens on 1000x, where x is its identifier
+	// For early development, the chord node listens on port 1000x, where x is its identifier
 	// The identifier is passed as the first command line argument
 	// The bootstrap (another node to use for join()) is the second optional argument
 
-	node.Identifier = os.Args[1]
-	if len(os.Args > 2){
-		node.Bootstrap = os.Args[2]
+	node.Identifier, _ = strconv.Atoi(os.Args[1])
+	if len(os.Args) > 2 {
+		node.Bootstrap, _ = strconv.Atoi(os.Args[2])
 	} else {
-		node.Bootstrap = "-1"
+		node.Bootstrap = node.Identifier
 	}
 
 	node.M = 3 // m-bit Key Space
 	node.HashID = node.Identifier
 	//node.Successor = node.Bootstrap
-	config.Port = "1000" + node.Identifier
+	node.Finger = make(map[int]int)
+	config.Port = "1000" + strconv.Itoa(node.Identifier)
 
-
+	//For testing give node a key
+	if node.Identifier == 1 {
+		node.Keys = make([]int, 1)
+		node.Keys[0] = 1
+	}
+	
+	
 	//Join the ring
-
-	if node.Identifer != node.Bootstrap {
+	//Need to intelize with modulo 
+	if node.Identifier != node.Bootstrap {
 		join(node)
 	} else {
-		for i := 1; i < m; i++ {
-			node.Finger[math.Pow(2,i)] = node.Identifier 
+		//The node is the only one; init finger table, successor, predecessor
+		for i := 0; i < node.M; i++ {
+			node.Finger[node.Identifier + powerof(2,i) % powerof(2,node.M)] = node.Identifier 
 		}
+		//finger[0]
+		node.Successor = node.Finger[node.Identifier + powerof(2,0) % powerof(2,node.M)]
+		//
+		node.Predecessor = node.Identifier
 	}
 
-			
+
+	fmt.Println(node.Finger)
 	
 
 	networkaddress := config.IpAddress + ":" + config.Port
