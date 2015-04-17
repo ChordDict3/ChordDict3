@@ -122,98 +122,52 @@ func update_finger_table(node *ChordNode, req *Request, encoder *json.Encoder){
 	
 }
 
-func closest_preceding_finger(node *ChordNode, id){
- 	for i := node.M-1; i > 0 ; i-- {
-		current_finger := node.Finger[node.Identifier + powerof(2,i) % powerof(2,node.M)]
-		if current_finger > node.Identifer && current_finger < id {
+func closest_preceding_finger(node *ChordNode, id int)(current_finger int){
+ 	for i := node.M - 1; i > 0 ; i-- {
+		current_finger = node.Finger[node.Identifier + powerof(2,i) % powerof(2,node.M)]
+		if current_finger > node.Identifier && current_finger < id {
 			return current_finger
-	}
+		}
 
+	}
+	return -1
 }
 
 func find_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
 
 	id := int(req.Params.(float64))
-
-	if (id == node.Identifier) || (id > node.Identifier && id < node.Successor) || node.Identifier == node.Successor {
-		m := Response{node.Identifier, nil}
-		fmt.Println("Response to ",id," ",m)
-		encoder.Encode(m)
+	
+	//See if the id is in section of the ring that this node is responsible for
+	if id == node.Identifier || id > node.Identifier && id < node.Successor || node.Identifier == node.Successor {
+		msg := Response{node.Identifier, nil}
+		fmt.Println("Response to ",id," ",msg)
+		encoder.Encode(msg)
+			
 	} else {
-
-		for {
-
-			if 
-			
-
-
+		//now check the finger table to get a new node to check
+		p := closest_preceding_finger(node, id)
+		if p == -1 {
+			fmt.Println("Error: closest_preceding_finger return -1")
+			//do an exit here
 		}
-
-		return 
+		//now recursively call the closer node
 			
-		for i :=0; i > node.M ; i++ {
-			current_finger := node.Finger[node.Identifier + powerof(2,i) % powerof(2,node.M)]
-			lower_interval := node.Identifier + powerof(2,i) % powerof(2,node.M)
-			upper_interval := node.Identifier + powerof(2,i+1) % powerof(2,node.M)
-			
-			if i == id {
-				m := Response{current_finger, nil}
-				fmt.Println("Response to ",id," ", m)
-				encoder.Encode(m)
-				return
-			}else{
-				//Is id in interval for this finger entry
-				if id > lower_interval && id < upper_interval {
-					m := Response{current_finger, nil}
-					fmt.Println("Response to ",id, " ",m)
-					encoder.Encode(m)
-					return
-				}
-				
-			}
-			
-			
-		}
+		encoder_predecessor, decoder_predecessor := createConnection(p)
+		m_predecessor := Request{"find_predecessor", id}
+		encoder_predecessor.Encode(m_predecessor)
 		
-
+		res_predecessor := new(Response)
+		decoder_predecessor.Decode(&res_predecessor)
+		fmt.Println("Recieved Predecessor: ", res_predecessor)
+		
+		msg := Response{res_predecessor.Result.(float64), nil}
+		fmt.Println("Response to ",id," ",msg)
+		encoder.Encode(msg)
+	
 	}
+}
 	
 
-}
-
-func find_predecessor_local(node *ChordNode, id int){
-
-
-	if (id == node.Identifier) || (id > node.Identifier && id < node.Successor) || node.Identifier == node.Successor {
-		return node.Identifier
-	} else {
-			
-		for i :=0; i > node.M ; i++ {
-			current_finger := node.Finger[node.Identifier + powerof(2,i) % powerof(2,node.M)]
-			lower_interval := node.Identifier + powerof(2,i) % powerof(2,node.M)
-			upper_interval := node.Identifier + powerof(2,i+1) % powerof(2,node.M)
-			
-			if i == id {
-				return current_finger
-			}else{
-				//Is id in interval for this finger entry
-				if id > lower_interval && id < upper_interval {
-					m := Response{current_finger, nil}
-					fmt.Println("Response to ",id, " ",m)
-					encoder.Encode(m)
-					return
-				}
-				
-			}
-			
-			
-		}
-		
-
-	}
-	
-
-}
 
 
 func find_successor(node *ChordNode, req *Request, encoder *json.Encoder){
@@ -390,7 +344,11 @@ func update_others(node *ChordNode)(){
 
 		fmt.Println("IF", incoming_finger)
 		
-		encoder, decoder := createConnection(node.Identifier)
+		//This node isn't listining yet so this doesn't work
+		//encoder, decoder := createConnection(node.Identifier)
+		
+		//Will this? Probably ineffencient 
+		encoder, decoder := createConnection(node.Bootstrap)
 		m := Request{"find_predecessor", incoming_finger}
 		encoder.Encode(m)
 		
