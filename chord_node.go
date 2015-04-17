@@ -43,40 +43,58 @@ type TestConfiguration struct{
 
 }
 
-func createConnection(identifer int) (encoder *json.Encoder, decoder *json.Decoder){
-	
-	conn, err := net.Dial("tcp", "localhost:1000"+ strconv.Itoa(identifer))
-	if err != nil {
-		fmt.Println("Connection error", err)
-	}
-	e := json.NewEncoder(conn)
-	d := json.NewDecoder(conn)
-	
-	return e, d
-}
 
 
-func join(node *ChordNode)(){
-	encoder, decoder := createConnection(node.Bootstrap)
-	id := strconv.Itoa(node.Identifier)
-	m := Request{"find_predecessor", id}
+/////
+// RPC Functions
+/////
+
+func get_succcessor(node *ChordNode, req *Request, encoder *json.Encoder){
+	m := Response{node.Successor, nil}
+	fmt.Println("Response to get_successor for",m)
 	encoder.Encode(m)
+	return
 
-	res := new(Response)
-	decoder.Decode(&res)
-	fmt.Println("Recieved: ", res)
-	
 }
+
+func get_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
+	m := Response{node.Predecessor, nil}
+	fmt.Println("Response to get_predecessor for",m)
+	encoder.Encode(m)
+	return
+}
+
+func set_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
+	id, _ := strconv.Atoi(req.Params.(string))
+	node.Predecessor = id
+	
+	m := Response{nil, nil}
+	fmt.Println("Response to get_predecessor for",m)
+	encoder.Encode(m)
+	return
+}
+
+func set_successor(node *ChordNode, req *Request, encoder *json.Encoder){
+	id, _ := strconv.Atoi(req.Params.(string))
+	node.Successor = id
+	
+	m := Response{nil, nil}
+	fmt.Println("Response to get_predecessor for",m)
+	encoder.Encode(m)
+	return
+}
+
+
 
 func find_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
 
 	fmt.Println("here")
 	
-	target, _ := strconv.Atoi(req.Params.(string))
+	id, _ := strconv.Atoi(req.Params.(string))
 
-	if (target == node.Identifier) || (target > node.Identifier && target < node.Successor) || node.Identifier == node.Successor {
+	if (id == node.Identifier) || (id > node.Identifier && id < node.Successor) || node.Identifier == node.Successor {
 		m := Response{node.Identifier, nil}
-		fmt.Println("Response to ",target," ",m)
+		fmt.Println("Response to ",id," ",m)
 		encoder.Encode(m)
 	} else {
 			
@@ -85,16 +103,16 @@ func find_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
 			lower_interval := node.Identifier + powerof(2,i) % powerof(2,node.M)
 			upper_interval := node.Identifier + powerof(2,i+1) % powerof(2,node.M)
 			
-			if i == target {
+			if i == id {
 				m := Response{current_finger, nil}
-				fmt.Println("Response to ",target," ", m)
+				fmt.Println("Response to ",id," ", m)
 				encoder.Encode(m)
 				return
 			}else{
-				//Is target in interval for this finger entry
-				if target > lower_interval && target < upper_interval {
+				//Is id in interval for this finger entry
+				if id > lower_interval && id < upper_interval {
 					m := Response{current_finger, nil}
-					fmt.Println("Response to ",target, " ",m)
+					fmt.Println("Response to ",id, " ",m)
 					encoder.Encode(m)
 					return
 				}
@@ -111,16 +129,61 @@ func find_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
 }
 
 func find_successor(node *ChordNode, req *Request, encoder *json.Encoder){
-	fmt.Println("not implemented")
+	id, _ := strconv.Atoi(req.Params.(string))
+	
+	encoder_predecessor, decoder_predecessor := createConnection(node.Identifier)
+	m_predecessor := Request{"find_predecessor", id}
+	encoder_predecessor.Encode(m)
 
+	res_predecessor := new(Response)
+	decoder_predecessor.Decode(&res_predecessor)
+	fmt.Println("Recieved: ", res_predecessor)
+
+	result := strconv.Atoi(res_predecessor.Result.(string))
+
+	//One more call here to get the successor??
+
+	found_successor := ""
+	
+	if result == node.Identifer {
+		//This node can return its own successor
+		found_successor = node.Successor
+	} else {
+		//We know the predecessor, now we ask that predecessor for its successor
+		encoder_successor, decoder_successor := createConnection(result)
+		m_successor := Request{"get_succcessor", nil}
+		new_encoder.Encode(m)
+		
+		res_successor := new(Response)
+		decoder_successor.Decode(&res)
+		fmt.Println("Recieved: ", res)
+		
+		found_successor := strconv.Atoi(res_successor.Result.(string))
 
 	
+	}
+
+	m := Response{found_successor, nil}
+	fmt.Println("Response to find_successor for",id, " ",m)
+	encoder.Encode(m)
+	return
+
 }
+
+/////
+// Helper Functions
+/////
 
 func powerof(x int, y int)(val int){
 	val = int(math.Pow(float64(x),float64(y)))
 	return val
 }
+
+/////
+// Node setup Functions
+/////
+
+
 
 func readTestConfig()(config *TestConfiguration){
 
@@ -131,6 +194,74 @@ func readTestConfig()(config *TestConfiguration){
 	return config
 
 }
+
+func createConnection(identifer int) (encoder *json.Encoder, decoder *json.Decoder){
+	
+	conn, err := net.Dial("tcp", "localhost:1000"+ strconv.Itoa(identifer))
+	if err != nil {
+		fmt.Println("Connection error", err)
+	}
+	e := json.NewEncoder(conn)
+	d := json.NewDecoder(conn)
+	
+	return e, d
+}
+
+
+
+func join(node *ChordNode)(){
+
+	init_finger_table(node)
+	
+}
+
+
+func init_finger_table(node *ChordNode)(){
+	//Asking bootstrap for successor of beginning of the the first finger's starting interval
+	start = node.Identifier + powerof(2,0) % powerof(2,node.M)
+	
+	encoder, decoder := createConnection(node.Bootstrap)
+	m := Request{"find_predecessor", node.start}
+	encoder.Encode(m)
+
+
+	res := new(Response)
+	decoder.Decode(&res)
+	fmt.Println("Recieved: ", res)
+	node.successor := strconv.Atoi(res_successor.Result.(string))
+	
+	//first finger is successor
+	node.Finger[node.Identifier + powerof(2,0) % powerof(2,node.M)] = node.Successor
+
+	//get this successor's predecessor, which becomes the current node's predecessor
+	encoder, decoder := createConnection(node.Successor)
+	m := Request{"get_predecessor", nil}
+	encoder.Encode(m)
+
+	res := new(Response)
+	decoder.Decode(&res)
+	fmt.Println("Recieved: ", res)
+	node.predecessor := strconv.Atoi(res_successor.Result.(string))
+
+	//set the successor's predecessor to the current node
+	encoder, decoder := createConnection(node.Successor)
+	m := Request{"set_predecessor", node.Identifier}
+	encoder.Encode(m)
+
+	res := new(Response)
+	decoder.Decode(&res)
+	fmt.Println("Recieved: ", res)
+
+	//loop through to update fingars
+	
+
+}
+
+
+//////
+// Handle incoming requests for RPCs
+//////
+
 
 func handleConnection(node *ChordNode, conn net.Conn){
 	decoder := json.NewDecoder(conn)
@@ -145,6 +276,14 @@ func handleConnection(node *ChordNode, conn net.Conn){
 		find_successor(node, req, encoder)
 	case "find_predecessor" :
 		find_predecessor(node, req, encoder)
+	case "get_successor" :
+		get_successor(node, req, encoder)
+	case "get_predecessor" :
+		get_predecessor(node, req, encoder)
+	case "set_successor" :
+		set_successor(node, req, encoder)
+	case "set_predecessor" :
+		set_predecessor(node, req, encoder)
 	}
 
 		
@@ -171,7 +310,8 @@ func main() {
 
 	node.M = 3 // m-bit Key Space
 	node.HashID = node.Identifier
-	//node.Successor = node.Bootstrap
+	//TODO in the future: node.HashID = generateNodeHash(node.Identifier)
+	
 	node.Finger = make(map[int]int)
 	config.Port = "1000" + strconv.Itoa(node.Identifier)
 
