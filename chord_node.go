@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"math"
 	//"time"
-	"reflect"
 )
 
 
@@ -53,15 +52,14 @@ type TestConfiguration struct{
 
 func get_successor(node *ChordNode, req *Request, encoder *json.Encoder){
 	m := Response{node.Successor, nil}
-	fmt.Println("Response to get_successor for",m)
 	encoder.Encode(m)
 	return
 
 }
 
 func get_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
+	status(node, "sending predecessor" + strconv.Itoa(node.Predecessor))
 	m := Response{node.Predecessor, nil}
-	fmt.Println("Response to get_predecessor for",m)
 	encoder.Encode(m)
 	return
 }
@@ -69,9 +67,8 @@ func get_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
 func set_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
 	id := int(req.Params.(float64))
 	node.Predecessor = id
-	
+	status(node, "set_predecessor")
 	m := Response{nil, nil}
-	fmt.Println("Response to get_predecessor for",m)
 	encoder.Encode(m)
 	return
 }
@@ -80,8 +77,10 @@ func set_successor(node *ChordNode, req *Request, encoder *json.Encoder){
 	id := int(req.Params.(float64))
 	node.Successor = id
 	
+	status(node, "Successor updated")
+	
+	
 	m := Response{nil, nil}
-	fmt.Println("Response to get_predecessor for",m)
 	encoder.Encode(m)
 	return
 }
@@ -90,31 +89,36 @@ func update_finger_table(node *ChordNode, req *Request, encoder *json.Encoder){
 	
 	arr := req.Params.([]interface{})
 	
-	n := int(arr[0].(float64))
+	s := int(arr[0].(float64))
 	i := int(arr[1].(float64))
 
-	//If the sending node is in [node.Identifier, node.Finger[i]) update
-	if i > node.Identifier && i < node.Finger[i] {
-		node.Finger[i] = n
+	status(node, "update_finger_table")
+	//set Successor here if Finger[0] gets updated
+	//The second check is to cover if the interval wraps around
+	if (s > node.Identifier && s < node.Finger[node.Identifier + powerof(2,i-1) % powerof(2,node.M)]) || ( (node.Identifier < s) && ((s > node.Identifier) && (s < node.Finger[node.Identifier + powerof(2,i-1) % powerof(2,node.M)] + powerof(2,node.M))))    {
+		
+		status(node, "update_finger_table Finger being updated")
+		node.Finger[node.Identifier + powerof(2,i-1) % powerof(2,node.M)] = s
+				
+		//Updating Successor
+		if i == 1 {
+			node.Successor = node.Finger[node.Identifier + powerof(2,i-1) % powerof(2,node.M)]
+		}
 
-		//Update predecessor
-
-		arr = []interface{}{n, i}
+		arr = []interface{}{s, i}
 		encoder_predecessor, decoder_predecessor := createConnection(node.Predecessor)
 		m_predecessor := Request{"update_finger_table", arr}
 		encoder_predecessor.Encode(m_predecessor)
 		
 		res := new(Response)
 		decoder_predecessor.Decode(&res)
-		fmt.Println("Recieved: ", res)
 
 
-	}
-	
+	} 
 
+	status(node, "update_finger_table finished")
 	
 	m := Response{nil, nil}
-	fmt.Println("Response to update_finger_table for",n," ",i)
 	encoder.Encode(m)
 	return
 
@@ -123,33 +127,44 @@ func update_finger_table(node *ChordNode, req *Request, encoder *json.Encoder){
 }
 
 func closest_preceding_finger(node *ChordNode, id int)(current_finger int){
- 	for i := node.M - 1; i > 0 ; i-- {
+
+	//looking for zero, should get 
+	 
+ 	for i := node.M - 1; i >= 0 ; i-- {
 		current_finger = node.Finger[node.Identifier + powerof(2,i) % powerof(2,node.M)]
-		if current_finger > node.Identifier && current_finger < id {
+
+		fmt.Println("ident ", node.Identifier, "CF ", current_finger, "id ", id)
+		//Have to handle the wrap around case too
+		//CF  0 id  0 identifer 1
+		//CF in (n, id)
+
+		if (current_finger > node.Identifier && current_finger <= id) || ((id < node.Identifier) && ((current_finger + powerof(2, node.M) > node.Identifier) && (current_finger + powerof(2, node.M) <= id + powerof(2, node.M)))) {
 			return current_finger
 		}
 
 	}
+	//Somethings wrong
+	fmt.Println("closest_preceding_finger failed")
+	os.Exit(0)
 	return -1
 }
 
 func find_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
 
 	id := int(req.Params.(float64))
-	
+
 	//See if the id is in section of the ring that this node is responsible for
-	if id == node.Identifier || id > node.Identifier && id < node.Successor || node.Identifier == node.Successor {
+	//Could be improved??
+	if id == node.Identifier || id > node.Identifier && id < node.Successor || ((node.Successor < node.Identifier) && ((id > node.Identifier) && (id < node.Successor + powerof(2,node.M)))) || node.Identifier == node.Successor {
+		status(node, "find_predecessor "+"id " + strconv.Itoa(id) + " result " + strconv.Itoa(node.Identifier))
 		msg := Response{node.Identifier, nil}
-		fmt.Println("Response to ",id," ",msg)
 		encoder.Encode(msg)
 			
 	} else {
 		//now check the finger table to get a new node to check
+		status(node, "calling closest_preceding_finger looking for " + strconv.Itoa(id))
 		p := closest_preceding_finger(node, id)
-		if p == -1 {
-			fmt.Println("Error: closest_preceding_finger return -1")
-			//do an exit here
-		}
+
 		//now recursively call the closer node
 			
 		encoder_predecessor, decoder_predecessor := createConnection(p)
@@ -158,10 +173,9 @@ func find_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
 		
 		res_predecessor := new(Response)
 		decoder_predecessor.Decode(&res_predecessor)
-		fmt.Println("Recieved Predecessor: ", res_predecessor)
 		
+		status(node, "find_predecessor "+"id " + strconv.Itoa(id) + " result " + strconv.Itoa(int(res_predecessor.Result.(float64))))
 		msg := Response{res_predecessor.Result.(float64), nil}
-		fmt.Println("Response to ",id," ",msg)
 		encoder.Encode(msg)
 	
 	}
@@ -179,11 +193,9 @@ func find_successor(node *ChordNode, req *Request, encoder *json.Encoder){
 
 	res_predecessor := new(Response)
 	decoder_predecessor.Decode(&res_predecessor)
-	fmt.Println("Recieved: ", res_predecessor)
+
 
 	result := int(res_predecessor.Result.(float64))
-
-	//One more call here to get the successor??
 
 	found_successor := 0
 	
@@ -198,7 +210,7 @@ func find_successor(node *ChordNode, req *Request, encoder *json.Encoder){
 		
 		res_successor := new(Response)
 		decoder_successor.Decode(&res_successor)
-		fmt.Println("Recieved: ", res_successor)
+
 		
 		found_successor = int(res_successor.Result.(float64))
 
@@ -206,7 +218,6 @@ func find_successor(node *ChordNode, req *Request, encoder *json.Encoder){
 	}
 
 	m := Response{found_successor, nil}
-	fmt.Println("Response to find_successor for",id, " ",m)
 	encoder.Encode(m)
 	return
 
@@ -220,6 +231,11 @@ func powerof(x int, y int)(val int){
 	val = int(math.Pow(float64(x),float64(y)))
 	return val
 }
+
+func status(node *ChordNode, msg string){
+	fmt.Println("Ident: ", node.Identifier, " P: ", node.Predecessor, " S: ", node.Successor, " F: ", node.Finger, " ",  msg)
+
+} 
 
 //Because golang's % of negative numbers is broken
 //https://github.com/golang/go/issues/448
@@ -264,25 +280,25 @@ func join(node *ChordNode)(){
 
 	init_finger_table(node)
 	update_others(node)
+	status(node, "Finish Join")
+	
 }
 
 
 func init_finger_table(node *ChordNode)(){
 	//Asking bootstrap for successor of beginning of the the first finger's starting interval
 	start := (node.Identifier + powerof(2,0) % powerof(2,node.M))
-	fmt.Println(reflect.TypeOf(start))
 
-	fmt.Println("start ", start)
-	
 	encoder, decoder := createConnection(node.Bootstrap)
-	m := Request{"find_predecessor", start}
+	m := Request{"find_successor", start}
 	encoder.Encode(m)
 
 	res := new(Response)
 	decoder.Decode(&res)
-	fmt.Println("Recieved: ", res)
-	node.Successor = int(res.Result.(float64))
 	
+	node.Successor = int(res.Result.(float64))
+
+
 	//first finger is successor
 	node.Finger[node.Identifier + powerof(2,0) % powerof(2,node.M)] = node.Successor
 
@@ -293,8 +309,10 @@ func init_finger_table(node *ChordNode)(){
 
 	res = new(Response)
 	decoder.Decode(&res)
-	fmt.Println("Recieved: ", res)
 	node.Predecessor = int(res.Result.(float64))
+	
+	status(node, "Do we have the right predecessor, successor?")
+
 
 	//set the successor's predecessor to the current node
 	encoder, decoder = createConnection(node.Successor)
@@ -303,27 +321,31 @@ func init_finger_table(node *ChordNode)(){
 
 	res = new(Response)
 	decoder.Decode(&res)
-	fmt.Println("Recieved: ", res)
 
 	//loop through finger list to update fingars
+	status(node, "looping through finger list to update")
 	for i := 1; i < node.M; i++ {
+
 		start = node.Identifier + powerof(2,i) % powerof(2,node.M)
 		previous_finger :=  node.Finger[node.Identifier + powerof(2,i-1) % powerof(2,node.M)]
+
 		//if the start of this finger is less that the node for the previous finger (see the i-1), it is also the node for this finger
-		if start < node.Finger[previous_finger] {
+		//handle wrap-around case
+
+		if (start < node.Finger[previous_finger]) || ((node.Finger[previous_finger] < start) && (start < node.Finger[previous_finger] + powerof(2,node.M)))  {
 			node.Finger[start] = node.Finger[previous_finger]
 		} else {
-			//ask the bootstrap for the successor
 
+			//ask the bootstrap for the successor
 			//time.Sleep(time.Second * 1)
 			
+			status(node, "now finding finger entry for " + strconv.Itoa(i) + "by asking find_successor")
 			encoder, decoder := createConnection(node.Bootstrap)
 			m := Request{"find_successor", start}
 			encoder.Encode(m)
 			
 			res := new(Response)
 			decoder.Decode(&res)
-			fmt.Println("Recieved: ", res)
 			finger_value := int(res.Result.(float64))
 
 			node.Finger[start] = finger_value
@@ -336,27 +358,36 @@ func init_finger_table(node *ChordNode)(){
 
 func update_others(node *ChordNode)(){
 	
-	for i := 1; i < node.M; i++ {
+	for i := 1; i <= node.M; i++ {
 		
 		//find a new node that may need its finger table updated to the newly joining node
 		//func mod is defined as a helper method because golang's % is broken for negative numbers
 		incoming_finger := mod((node.Identifier - powerof(2, i-1)),powerof(2,node.M))
-
-		fmt.Println("IF", incoming_finger)
 		
 		//This node isn't listining yet so this doesn't work
 		//encoder, decoder := createConnection(node.Identifier)
 		
 		//Will this? Probably ineffencient 
-		encoder, decoder := createConnection(node.Bootstrap)
+		//encoder, decoder := createConnection(node.Bootstrap)
+	
+
+		//trying this
+
+		status(node, "about to look for the predecessor")
+
+		encoder, decoder := createConnection(node.Identifier)
 		m := Request{"find_predecessor", incoming_finger}
 		encoder.Encode(m)
 		
 		res := new(Response)
 		decoder.Decode(&res)
-		fmt.Println("Recieved: ", res)
 		p := int(res.Result.(float64))
 
+		//p should be 0...
+		status(node, "update_others_find_predecessor result ")
+		fmt.Println(res.Result, i)
+		
+		
 		//Now adjust the fingers on node p
 		//sending array of [n,i] for p to update its table
 
@@ -368,7 +399,6 @@ func update_others(node *ChordNode)(){
 		
 		res = new(Response)
 		decoder.Decode(&res)
-		fmt.Println("Recieved: ", res)
 		
 	}
 	
@@ -387,7 +417,7 @@ func handleConnection(node *ChordNode, conn net.Conn){
 	req := new(Request)
 	decoder.Decode(&req)
 
-	fmt.Println(req)
+	//status(node, req.Method)
 	
 	switch req.Method {
 	case "find_successor" :
@@ -441,11 +471,11 @@ func main() {
 		node.Keys = make([]int, 1)
 		node.Keys[0] = 1
 	}
-	
-	
-	//Join the ring
+
+	preform_join := false
+
 	if node.Identifier != node.Bootstrap {
-		join(node)
+		preform_join = true
 	} else {
 		//The node is the only one; init finger table, successor, predecessor
 		for i := 0; i < node.M; i++ {
@@ -453,15 +483,12 @@ func main() {
 		}
 		//finger[0]
 		node.Successor = node.Finger[node.Identifier + powerof(2,0) % powerof(2,node.M)]
-		//
 		node.Predecessor = node.Identifier
 	}
 
+	status(node, "")
 
-	fmt.Println(node.Finger)
-	fmt.Println("Predecessor ",node.Predecessor)
-	fmt.Println("Successor ",node.Successor)
-	
+	//Race conditions if multiple nodes are joining at once??
 
 	networkaddress := config.IpAddress + ":" + config.Port
 	ln, err := net.Listen(config.Protocol, networkaddress)
@@ -469,6 +496,11 @@ func main() {
 		// handle error
 	}
 	for {
+		if preform_join {
+			preform_join = false
+			go join(node)
+		}
+
 		conn, err := ln.Accept() // this blocks until connection or error
 		if err != nil {
 			// handle error
