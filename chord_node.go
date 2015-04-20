@@ -95,6 +95,8 @@ func update_finger_table(node *ChordNode, req *Request, encoder *json.Encoder){
 	status(node, "update_finger_table")
 	//set Successor here if Finger[0] gets updated
 	//The second check is to cover if the interval wraps around
+	
+	//TODO - make this cleaner
 	if (s > node.Identifier && s < node.Finger[node.Identifier + powerof(2,i-1) % powerof(2,node.M)]) || ( (node.Identifier < s) && ((s > node.Identifier) && (s < node.Finger[node.Identifier + powerof(2,i-1) % powerof(2,node.M)] + powerof(2,node.M))))    {
 		
 		status(node, "update_finger_table Finger being updated")
@@ -126,21 +128,59 @@ func update_finger_table(node *ChordNode, req *Request, encoder *json.Encoder){
 	
 }
 
+
+
+/*
+closest_preceding_finger
+
+if finger[i].node in (n, id):
+return finger[i].node
+
+*/
+
+
 func closest_preceding_finger(node *ChordNode, id int)(current_finger int){
 
-	//looking for zero, should get 
 	 
  	for i := node.M - 1; i >= 0 ; i-- {
 		current_finger = node.Finger[node.Identifier + powerof(2,i) % powerof(2,node.M)]
 
 		fmt.Println("ident ", node.Identifier, "CF ", current_finger, "id ", id)
-		//Have to handle the wrap around case too
-		//CF  0 id  0 identifer 1
-		//CF in (n, id)
 
-		if (current_finger > node.Identifier && current_finger <= id) || ((id < node.Identifier) && ((current_finger + powerof(2, node.M) > node.Identifier) && (current_finger + powerof(2, node.M) <= id + powerof(2, node.M)))) {
+		//Have to handle the wrap around case too
+
+		//lower_bound = 1
+		//upper_bound = 0
+		//current_finger = 0
+		
+
+		
+		lower_bound := node.Identifier
+		upper_bound := id
+		
+
+		if current_finger > lower_bound && current_finger <= upper_bound {
 			return current_finger
 		}
+		
+		//wrap around case, current_finger is not wrapped around
+		if upper_bound < lower_bound {
+		
+			if current_finger > lower_bound && current_finger <= upper_bound + powerof(2, node.M) {
+				return current_finger
+			} 
+		}
+
+		//wrap around case, current_finger is wrapped around
+		if (upper_bound < lower_bound) && (current_finger <= upper_bound) {
+			if (current_finger + powerof(2, node.M) > lower_bound) && (current_finger <= upper_bound) {
+				return current_finger
+			}
+		}
+
+		//if (current_finger > node.Identifier && current_finger <= id) || ((id < node.Identifier) && ((current_finger + powerof(2, node.M) > node.Identifier) && (current_finger + powerof(2, node.M) <= id + powerof(2, node.M)))) {
+		//	return current_finger
+		//}
 
 	}
 	//Somethings wrong
@@ -339,7 +379,7 @@ func init_finger_table(node *ChordNode)(){
 			//ask the bootstrap for the successor
 			//time.Sleep(time.Second * 1)
 			
-			status(node, "now finding finger entry for " + strconv.Itoa(i) + "by asking find_successor")
+			status(node, "now finding finger entry for " + strconv.Itoa(i) + " by asking find_successor")
 			encoder, decoder := createConnection(node.Bootstrap)
 			m := Request{"find_successor", start}
 			encoder.Encode(m)
@@ -364,15 +404,7 @@ func update_others(node *ChordNode)(){
 		//func mod is defined as a helper method because golang's % is broken for negative numbers
 		incoming_finger := mod((node.Identifier - powerof(2, i-1)),powerof(2,node.M))
 		
-		//This node isn't listining yet so this doesn't work
-		//encoder, decoder := createConnection(node.Identifier)
-		
-		//Will this? Probably ineffencient 
-		//encoder, decoder := createConnection(node.Bootstrap)
 	
-
-		//trying this
-
 		status(node, "about to look for the predecessor")
 
 		encoder, decoder := createConnection(node.Identifier)
@@ -486,7 +518,7 @@ func main() {
 		node.Predecessor = node.Identifier
 	}
 
-	status(node, "")
+	status(node, "About to start the listener")
 
 	//Race conditions if multiple nodes are joining at once??
 
