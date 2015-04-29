@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"math/big"
+	"math"
 	"crypto/sha1"
 )
 
@@ -25,7 +26,7 @@ type ChordNode struct{
 	//Keys []int
 }
 
-var node = new(ChordNode)
+var node = new(ChordNode) //made global so accessible by chord functions
 
 type Request struct{
 	Method string `json:"method"` 
@@ -61,12 +62,19 @@ func (c ChordNode) SendRPC(identifier string, serviceMethod string, args interfa
 }
 
 //generates sha1 hash of "ip:port" string; sha1 too large for int; using big.Int
-func generateNodeHash(identifier string) *big.Int {
+//returning hash mod 2^m as the hash ID for the node
+//still returning *big.Int; want int - needs work
+func generateNodeHash(identifier string, m int) *big.Int {
 	hasher := sha1.New()
 	hasher.Write([]byte(identifier))
 	hashbytes := hasher.Sum(nil)
 	hash := new(big.Int).SetBytes(hashbytes)
-	return hash
+	hashID_big := big.NewInt(0)
+	mfloat := float64(m)
+	modulo_val := int64(math.Pow(2,mfloat))
+	modulo_bigint := big.NewInt(modulo_val)
+	hashID_big.Mod(hash, modulo_bigint)
+	return hashID_big
 }
 
 //CHORD FUNCTIONS
@@ -88,11 +96,16 @@ func (c ChordNode) join(identifier string) {
 
 //find the immediate successor of node with given identifier
 func (c ChordNode) find_successor(identifier string, reply *string) {
-//	if (generateNodeHash(identifier) < generateNodeHash(node.Successor) && generateNodeHash(identifier) > generateNodeHash(node.Predecessor)) {
-//		*reply = node.Successor
-//	} else {
+//the node being asked is the successor
+//is this smart to do? not setting predecessor on create; requires stabilize to run to work
+/*	if ((generateNodeHash(identifier) > generateNodeHash(node.Predecessor)) && (generateNodeHash(identifier) <= generateNodeHash(node.Identifier))) {
+		*reply = node.Identifier
+	} else if ((generateNodeHash(identifier) < generateNodeHash(node.Successor)) && (generateNodeHash(identifier) > generateNodeHash(node.Predecessor))) {
+		//node we're looking for is this node's successor
+		*reply = node.Successor
+	} else {
 		//find closest finger and forward request there
-//	}
+	}*/
 }
 
 //func stabilize()
@@ -550,7 +563,7 @@ func main() {
 	node.IP = config.IpAddress
 	node.Port = config.Port
 	node.M = 3
-	node.HashID = generateNodeHash(node.Identifier) 
+	node.HashID = generateNodeHash(node.Identifier, node.M) 
 	node.Successor = ""
 	node.Predecessor = ""
 	fmt.Println("Initialized!")
