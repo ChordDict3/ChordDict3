@@ -8,28 +8,29 @@ import (
 	"os"
 	"github.com/HouzuoGuo/tiedot/db"
 	"strconv"
+	"time"
+	"reflect"
 )
-
-/*
-TODO
-ID
-finish parsing values from config
-*/
 
 type Request struct{
 	Method string `json:"method"` 
-	Params interface{} `json:"params`
+	Params interface{} `json:"params"`
 	Id interface{} `json:"id"`
 }
 
 type Response struct{
 	Result interface{} `json:"result"`
+	Error interface{} `json:"error"`
 	Id interface{} `json:"id"`
-	Error interface{} `json:"error"`      // Error must be null if there was no error
 }
 
-type Easy struct{
-	Easy string `json:"easy"`
+type DictValue struct {
+	Content interface{}
+	Size uintptr //return type from Type.Size()
+	Created time.Time
+	Modified time.Time
+	Accessed time.Time
+	Permission string
 }
 
 type Configuration struct{
@@ -200,9 +201,6 @@ func insert(req *Request, encoder *json.Encoder, triplets *db.Col, update bool, 
 	// See if there this key/val is already in DB
 	queryResult := query_key_rel(key, rel, triplets)
 	if len(queryResult) != 0 {
-		//Key Already Exists
-		//fmt.Println("Insert: key " + key + " rel " + rel + " already exists")
-
 		if update{
 			// insertOrUpdate() now replaces the key/rel with an updated value
 			// delete old value, insert new
@@ -212,36 +210,46 @@ func insert(req *Request, encoder *json.Encoder, triplets *db.Col, update bool, 
 					panic(err)
 				}
 			}
+			now := time.Now()
+			dictVal := DictValue{
+				Content: val,
+				Size: reflect.TypeOf(val).Size(),
+				Created: now,
+				Modified: now,
+				Accessed: now,
+				Permission: "RW",
+			}
 
 			//insert new value
 			_, err := triplets.Insert(map[string]interface{}{
 				"key": key,
 				"rel": rel,
-				"val": val})
+				"val": dictVal})
 			if err != nil {
 				panic(err)
 			}
 			//fmt.Println("Inserting ", docID)
-
-			//insertOrUpdate doesn't return anything
-
-
-		} else{
+		} else {
 			// insert() fails if key/rel already exists
 			//fmt.Println("Insert did not happen, need to return false")
-
-			// TODO difference in spec, json RPC says to set "result" to null if error, project spec says to return "false"
 			m := Response{false, id, nil}
 			encoder.Encode(m)
-
-			
 		}
 	} else {
-		
+		now := time.Now()
+		dictVal := DictValue{
+			Content: val,
+			Size: reflect.TypeOf(val).Size(),
+			Created: now,
+			Modified: now,
+			Accessed: now,
+			Permission: "RW",
+		}
+	
 		_, err := triplets.Insert(map[string]interface{}{
 			"key": key,
 			"rel": rel,
-			"val": val})
+			"val": dictVal})
 		if err != nil {
 			panic(err)
 		}
@@ -252,10 +260,8 @@ func insert(req *Request, encoder *json.Encoder, triplets *db.Col, update bool, 
 			m := Response{true, id, nil}
 			encoder.Encode(m)
 		}
-
 	}
 }
-
 
 func delete(req *Request, triplets *db.Col){
 	

@@ -284,13 +284,38 @@ func mod(m int, n int)(val int){
 	return val
 }
 
+func StringHash(s string) uint8 {
+	var hash uint8 = 17
 
+	for _, c := range s {
+		hash = ((hash << 5) + hash) + c
+	}
+
+	return hash
+}
+
+func NodeHash(ipAddr, port string) uint8 {
+	return StringHash(ipAddr + port)
+}
+
+func KeyRelHash(key, relationship string) uint8 {
+	var keyHash = StringHash(key)
+	var relHash = StringHash(relationship)
+
+	return (keyHash & 0xF0) | (relHash & 0x0F)
+}
+
+func KeyOnlyHash(key string) []uint8 {
+	//get all combos of bits
+}
+
+func RelOnlyHash(relationship string) []uint8 {
+	//get all combos of bits
+}
 
 /////
 // Node setup Functions
 /////
-
-
 
 func readTestConfig()(config *TestConfiguration){
 
