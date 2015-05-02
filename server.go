@@ -1,7 +1,7 @@
 package main
 
 import (
-	//"fmt"
+	"fmt"
 	"net"
 	"encoding/json"
 	"io/ioutil"
@@ -26,7 +26,7 @@ type Response struct{
 
 type DictValue struct {
 	Content interface{}
-	Size uintptr //return type from Type.Size()
+	Size float64 
 	Created time.Time
 	Modified time.Time
 	Accessed time.Time
@@ -45,17 +45,36 @@ type Configuration struct{
 
 }
 
+func makeDictValue(content interface{}, permission string) DictValue {
+	now := time.Now()
+	dictVal := DictValue{
+		Content: content,
+		Size: float64(reflect.TypeOf(content).Size()),
+		Created: now,
+		Modified: now,
+		Accessed: now,
+		Permission: permission,
+	}
+	return dictVal
+}
+
+func insertValueIntoTriplets(key string, rel string, val map[string]interface{}, triplets *db.Col) {
+	_, err := triplets.Insert(map[string]interface{}{
+		"key": key,
+		"rel": rel,
+		"val": val})
+	if (err != nil) {
+		panic(err)
+	}
+}
+
 func handleConnection(conn net.Conn, triplets *db.Col, myDB *db.DB) {
 	decoder := json.NewDecoder(conn)
 	encoder := json.NewEncoder(conn)
 	req := new(Request)
 	decoder.Decode(&req)
-	//fmt.Println()
-	//fmt.Printf("Received : %+v", req)
-	//fmt.Println()
-	
+
 	// Switch to see what method to call
-	
 	switch req.Method {
 	case "lookup" :
 		lookup(req, encoder, triplets, req.Id)
@@ -72,12 +91,9 @@ func handleConnection(conn net.Conn, triplets *db.Col, myDB *db.DB) {
 	case "shutdown" :
 		shutdown(myDB)
 	}
-	
 }
 
 func lookup(req *Request, encoder *json.Encoder, triplets *db.Col, id interface{}){
-	//fmt.Printf("Looking up %v", req)
-
 	p := req.Params
 	arr := p.([]interface{})
 	
@@ -88,36 +104,31 @@ func lookup(req *Request, encoder *json.Encoder, triplets *db.Col, id interface{
 	queryResult := query_key_rel(key, rel, triplets)
 	if len(queryResult) != 0 {
 		for i := range queryResult {
-			
 			readBack, err := triplets.Read(i)
 			if err != nil {
 				panic(err)
 			}
 			
-			val := readBack["val"].(map[string]interface {})
-			//fmt.Println(val)
-			//fmt.Println(key + " " + rel + " has value " + val)
-			//TODO get ID value
+			val := readBack["val"].(map[string]interface{})
+			fmt.Println(val)
+			//update with new Accessed time
+			val["Accessed"] = time.Now()
+			insertValueIntoTriplets(key, rel, val, triplets)
+			//send response
 			m := Response{val, id, nil}
 			encoder.Encode(m)
 		}
 		
 	} else {
 		// Key/rel not in DB
-		//fmt.Println("key/rel not in DB return null in result")
 		m := Response{nil, id, nil}
 		encoder.Encode(m)
 	}
-	
 }
 
 func listKeys(encoder *json.Encoder, triplets *db.Col, id interface{}){
-	//TODO make sure UNIQUE keys
-	//fmt.Println("Listing all unique keys")
-
 	var query interface{}
 	json.Unmarshal([]byte(`{"n": [{"has": ["key"]}, {"has": ["rel"]}]}`), &query)
-	//json.Unmarshal([]byte(`{"eq": "keyA", "in": ["key"]}`), &query)
 	queryResult := make(map[int]struct{}) // query result (document IDs) goes into map keys
 
 	if err := db.EvalQuery(query, triplets, &queryResult); err != nil {
@@ -125,10 +136,9 @@ func listKeys(encoder *json.Encoder, triplets *db.Col, id interface{}){
 	}
 
 	key_set := make(map[string]bool)
-	// Query result are document IDs
-	//fmt.Println(queryResult)
-	for id := range queryResult {
 
+	// Query result are document IDs
+	for id := range queryResult {
 		readBack, err := triplets.Read(id)
 		if err != nil {
 			panic(err)
@@ -139,7 +149,6 @@ func listKeys(encoder *json.Encoder, triplets *db.Col, id interface{}){
 
 	val := make([]string, 0)
 	for i := range key_set{
-		//fmt.Println(i)
 		val = append(val,i)
 	}
 	
@@ -187,8 +196,6 @@ func listIDs(encoder *json.Encoder, triplets *db.Col, id interface{}){
 
 
 func insert(req *Request, encoder *json.Encoder, triplets *db.Col, update bool, id interface{}){
-	//fmt.Printf("Inserting %v", req)
-
 	p := req.Params
 	arr := p.([]interface{})
 	
@@ -196,56 +203,36 @@ func insert(req *Request, encoder *json.Encoder, triplets *db.Col, update bool, 
 	rel := arr[1].(string)
 	val := arr[2]
 
-	//fmt.Println(key, rel, val)
-
 	// See if there this key/val is already in DB
 	queryResult := query_key_rel(key, rel, triplets)
 	if len(queryResult) != 0 {
 		if update{
 			// insertOrUpdate() now replaces the key/rel with an updated value
-			// delete old value, insert new
-			for id := range queryResult {
-				//fmt.Println("Deleting ", id)
-				if err := triplets.Delete(id); err != nil {
+			for i := range queryResult {
+				readBack, err := triplets.Read(i)
+				if err != nil {
 					panic(err)
 				}
+			
+				dictVal := readBack["val"].(map[string]interface{})
+				//update content
+				dictVal["Content"] = val
+				//update with new Accessed/Modified time
+				now := time.Now()
+				dictVal["Accessed"] = now
+				dictVal["Modified"] = now
+				insertValueIntoTriplets(key, rel, dictVal, triplets)
+				//send response
+				//m := Response{val, id, nil}
+				//encoder.Encode(m)
 			}
-			now := time.Now()
-			dictVal := DictValue{
-				Content: val,
-				Size: reflect.TypeOf(val).Size(),
-				Created: now,
-				Modified: now,
-				Accessed: now,
-				Permission: "RW",
-			}
-
-			//insert new value
-			_, err := triplets.Insert(map[string]interface{}{
-				"key": key,
-				"rel": rel,
-				"val": dictVal})
-			if err != nil {
-				panic(err)
-			}
-			//fmt.Println("Inserting ", docID)
 		} else {
 			// insert() fails if key/rel already exists
-			//fmt.Println("Insert did not happen, need to return false")
 			m := Response{false, id, nil}
 			encoder.Encode(m)
 		}
 	} else {
-		now := time.Now()
-		dictVal := DictValue{
-			Content: val,
-			Size: reflect.TypeOf(val).Size(),
-			Created: now,
-			Modified: now,
-			Accessed: now,
-			Permission: "RW",
-		}
-	
+		dictVal := makeDictValue(val, "RW")
 		_, err := triplets.Insert(map[string]interface{}{
 			"key": key,
 			"rel": rel,
