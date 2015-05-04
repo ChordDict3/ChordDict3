@@ -7,23 +7,24 @@ import (
 	"fmt"
 	"net/rpc"
 //	"encoding/json"
-	"os"
-	"strconv"
-	"math/big"
-	"math"
-	"crypto/sha1"
+	//"os"
+	//"strconv"
+	//"math/big"
+	//"math"
+	//"crypto/sha1"
+	"hash/crc64"
 )
 
 type ChordNode struct{
 	Identifier string
 	IP string
 	Port int
-	HashID *big.Int
+	HashID uint64
 	Successor string
 	Predecessor string
 	FingerTable []string
-	M int
-	//Keys []int
+	M uint64 
+	//Keys []uint64
 }
 
 var node = new(ChordNode) //made global so accessible by chord functions
@@ -64,17 +65,32 @@ func (c ChordNode) SendRPC(identifier string, serviceMethod string, args interfa
 //generates sha1 hash of "ip:port" string; sha1 too large for int; using big.Int
 //returning hash mod 2^m as the hash ID for the node
 //still returning *big.Int; want int - needs work
-func generateNodeHash(identifier string, m int) *big.Int {
-	hasher := sha1.New()
+func generateNodeHash(identifier string, m uint64) uint64 {
+	hasher := crc64.New(crc64.MakeTable(123456789)) //any number will do
 	hasher.Write([]byte(identifier))
-	hashbytes := hasher.Sum(nil)
-	hash := new(big.Int).SetBytes(hashbytes)
-	hashID_big := big.NewInt(0)
-	mfloat := float64(m)
-	modulo_val := int64(math.Pow(2,mfloat))
-	modulo_bigint := big.NewInt(modulo_val)
-	hashID_big.Mod(hash, modulo_bigint)
-	return hashID_big
+	hash64 := hasher.Sum64()
+	hash := mod(hash64, uint64(1 << m))
+	return hash 
+}
+
+func generateKeyRelHash(key string, rel string, m uint64) uint64 {
+	keyHash := generateNodeHash(key, m)
+	relHash := generateNodeHash(rel, m)
+	shiftOffset := uint64(0)
+	if (mod(m, uint64(2)) != 0) {  // if m is odd, additional shift needed
+		shiftOffset = uint64(1)
+	}
+		
+	upper := uint64( ((1 << m) - 1) ^ ((1 << (m/2)) - 1) )
+	lower := uint64( ((1 << m) - 1) ^ ( ((1 << (m/2 + shiftOffset)) - 1) << (m/2)) )
+	fmt.Printf("key  :%0b\n", keyHash)
+	fmt.Printf("rel  :%0b\n", relHash)
+	fmt.Printf("upper:%0b\n", upper)
+	fmt.Printf("lower:%0b\n", lower)
+	fmt.Printf("keyup:%0b\n", keyHash&upper)
+	fmt.Printf("rello:%0b\n", relHash&lower)
+	hash := (keyHash & upper) | (relHash & lower)
+	return hash
 }
 
 //CHORD FUNCTIONS
@@ -193,12 +209,7 @@ func update_finger_table(node *ChordNode, req *Request, encoder *json.Encoder){
 	m := Response{nil, nil}
 	encoder.Encode(m)
 	return
-
-	
-	
 }
-
-
 
 /*
 closest_preceding_finger
@@ -345,14 +356,13 @@ func status(node *ChordNode, msg string){
 	fmt.Println("Ident: ", node.Identifier, " P: ", node.Predecessor, " S: ", node.Successor, " F: ", node.Finger, " ",  msg)
 
 } 
-
+*/
 //Because golang's % of negative numbers is broken
 //https://github.com/golang/go/issues/448
-func mod(m int, n int)(val int){
-	val = ((m % n) + n) % n
-	return val
+func mod(m uint64, n uint64) uint64 {
+	return ((m % n) + n) % n
 }
-
+/*
 
 
 /////
@@ -505,6 +515,43 @@ func update_others(node *ChordNode)(){
 	
 }
 
+//////
+// Dict functions
+//////
+
+func lookup(node *ChordNode, req *Request, encoder *json.Encoder, triplets *db.Col) {
+	p := req.Params
+	arr := p.([]interface{})
+	
+	key := arr[0].(string)
+	rel := arr[1].(string)
+
+	// See if there this key/val is already in DB
+	queryResult := query_key_rel(key, rel, triplets)
+	if len(queryResult) != 0 {
+		for i := range queryResult {
+			readBack, err := triplets.Read(i)
+			if err != nil {
+				panic(err)
+			}
+			
+			val := readBack["val"].(map[string]interface{})
+			fmt.Println(val)
+			//update with new Accessed time
+			val["Accessed"] = time.Now()
+			insertValueIntoTriplets(key, rel, val, triplets)
+			//send response
+			m := Response{val, id, nil}
+			encoder.Encode(m)
+		}
+		
+	} else {
+		// Key/rel not in DB
+		m := Response{nil, id, nil}
+		encoder.Encode(m)
+	}
+}
+
 
 
 //////
@@ -536,13 +583,15 @@ func handleConnection(node *ChordNode, conn net.Conn){
 		set_predecessor(node, req, encoder)
 	case "update_finger_table" :
 		update_finger_table(node, req, encoder)
-
+	case "lookup" :
+		lookup(node, req, encoder, triplets)
 	}
 */
 		
 
 //}
 
+/*
 func main() {
 	// Parse argument configuration block
 	//node := new(ChordNode)
@@ -631,5 +680,20 @@ func main() {
 		}
 		go handleConnection(node, conn) 
 	}
-	*/
+}
+*/
+
+func main() {
+	m := uint64(9)
+	fmt.Printf("%b\n", generateNodeHash("127.0.0.1:1000", m))
+	fmt.Printf("%b\n", generateKeyRelHash("key", "rel", m))
+	fmt.Printf("%b\n", generateKeyRelHash("ney", "rel", m))
+	fmt.Printf("%b\n", generateKeyRelHash("xey", "rel", m))
+	fmt.Printf("%b\n", generateKeyRelHash("rey", "rgl", m))
+	fmt.Printf("%b\n", generateKeyRelHash("wey", "rfl", m))
+	fmt.Printf("%b\n", generateKeyRelHash("sey", "rel", m))
+	fmt.Printf("%b\n", generateKeyRelHash("oey", "rdl", m))
+	fmt.Printf("%b\n", generateKeyRelHash("pey", "rcl", m))
+	fmt.Printf("%b\n", generateKeyRelHash(".ey", "rbl", m))
+	fmt.Printf("%b\n", generateKeyRelHash("vey", "ral", m))
 }
