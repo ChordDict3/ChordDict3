@@ -287,10 +287,11 @@ func mod(m int, n int)(val int){
 func StringHash(s string) uint8 {
 	var hash uint8 = 17
 
-	for _, c := range s {
+	/*
+        for _, c := range s {
 		hash = ((hash << 5) + hash) + c
 	}
-
+        */
 	return hash
 }
 
@@ -305,6 +306,7 @@ func KeyRelHash(key, relationship string) uint8 {
 	return (keyHash & 0xF0) | (relHash & 0x0F)
 }
 
+/*
 func KeyOnlyHash(key string) []uint8 {
 	//get all combos of bits
 }
@@ -312,6 +314,7 @@ func KeyOnlyHash(key string) []uint8 {
 func RelOnlyHash(relationship string) []uint8 {
 	//get all combos of bits
 }
+*/
 
 /////
 // Node setup Functions
@@ -360,6 +363,7 @@ func init_finger_table(node *ChordNode)(){
 
 	res := new(Response)
 	decoder.Decode(&res)
+
 	
 	node.Successor = int(res.Result.(float64))
 
@@ -398,7 +402,9 @@ func init_finger_table(node *ChordNode)(){
 		//handle wrap-around case
 
 		if (start < node.Finger[previous_finger]) || ((node.Finger[previous_finger] < start) && (start < node.Finger[previous_finger] + powerof(2,node.M)))  {
-			node.Finger[start] = node.Finger[previous_finger]
+			node.Finger[start] = previous_finger
+			status(node, "setting finger entry to previous finger")
+
 		} else {
 
 			//ask the bootstrap for the successor
