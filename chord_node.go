@@ -9,7 +9,8 @@ import (
 	//"github.com/HouzuoGuo/tiedot/db"
 	"strconv"
 	"math"
-	//"time"
+	"time"
+	"math/rand"
 )
 
 
@@ -58,7 +59,6 @@ func get_successor(node *ChordNode, req *Request, encoder *json.Encoder){
 }
 
 func get_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
-	status(node, "sending predecessor" + strconv.Itoa(node.Predecessor))
 	m := Response{node.Predecessor, nil}
 	encoder.Encode(m)
 	return
@@ -78,8 +78,7 @@ func set_successor(node *ChordNode, req *Request, encoder *json.Encoder){
 	node.Successor = id
 	
 	status(node, "Successor updated")
-	
-	
+		
 	m := Response{nil, nil}
 	encoder.Encode(m)
 	return
@@ -141,20 +140,26 @@ return finger[i].node
 
 func closest_preceding_finger(node *ChordNode, id int)(current_finger int){
 
-	 
- 	for i := node.M - 1; i >= 0 ; i-- {
+	n := node.Identifier
+
+
+	for i := node.M - 1; i >= 0 ; i-- {
 		current_finger = node.Finger[node.Identifier + powerof(2,i) % powerof(2,node.M)]
-
-		fmt.Println("ident ", node.Identifier, "CF ", current_finger, "id ", id)
-
-		//Have to handle the wrap around case too
-
-		//lower_bound = 1
-		//upper_bound = 0
-		//current_finger = 0
+		
+		
+		
+		fmt.Println("N ", n, "id ", id, "CF ", current_finger)
+		status(node, "closest_preceding_finger")
+		if inChordRange(current_finger, n, id, node.M){
+			return current_finger
+		}
 		
 
+	}
+	return n
+	
 		
+		/*
 		lower_bound := node.Identifier
 		upper_bound := id
 		
@@ -177,16 +182,14 @@ func closest_preceding_finger(node *ChordNode, id int)(current_finger int){
 				return current_finger
 			}
 		}
-
-		//if (current_finger > node.Identifier && current_finger <= id) || ((id < node.Identifier) && ((current_finger + powerof(2, node.M) > node.Identifier) && (current_finger + powerof(2, node.M) <= id + powerof(2, node.M)))) {
-		//	return current_finger
-		//}
+                  
 
 	}
 	//Somethings wrong
 	fmt.Println("closest_preceding_finger failed")
 	os.Exit(0)
 	return -1
+        */
 }
 
 func find_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
@@ -195,14 +198,68 @@ func find_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
 
 	//See if the id is in section of the ring that this node is responsible for
 	//Could be improved??
-	if id == node.Identifier || id > node.Identifier && id < node.Successor || ((node.Successor < node.Identifier) && ((id > node.Identifier) && (id < node.Successor + powerof(2,node.M)))) || node.Identifier == node.Successor {
+	start := node.Identifier
+	end := node.Successor
+	//fmt.Println("Start ", start, "End ", end,  "id ", id)
+
+	
+	if inChordRange(id, start, end, node.M) || start == end {
+		msg := Response{node.Identifier, nil}
+		encoder.Encode(msg)
+	}else{
+
+		
+		next_node := closest_preceding_finger(node, id)
+
+		if next_node == node.Identifier {
+			//breaking out - returning node.Identifier
+			msg := Response{node.Identifier, nil}
+			encoder.Encode(msg)
+			return
+		}
+		
+		
+		encoder_predecessor, decoder_predecessor := createConnection(next_node)
+		m_predecessor := Request{"find_predecessor", id}
+		encoder_predecessor.Encode(m_predecessor)
+		
+		res_predecessor := new(Response)
+		decoder_predecessor.Decode(&res_predecessor)
+
+		msg := Response{res_predecessor.Result.(float64), nil}
+		encoder.Encode(msg)
+
+			
+	}
+		
+
+
+}
+
+
+
+
+
+
+/*
+
+
+
+
+
+
+	
+	
+//	if id == node.Identifier || id > node.Identifier && id <= node.Successor || ((node.Successor < node.Identifier) && ((id > node.Identifier) && (id <= node.Successor + powerof(2,node.M)))) || node.Identifier == node.Successor {
+
+	if id == start || id > start && id <= end || (start > end) && (id > start) || (start > end) && id <= end  || start == end {
 		status(node, "find_predecessor "+"id " + strconv.Itoa(id) + " result " + strconv.Itoa(node.Identifier))
 		msg := Response{node.Identifier, nil}
 		encoder.Encode(msg)
 			
 	} else {
 		//now check the finger table to get a new node to check
-		status(node, "calling closest_preceding_finger looking for " + strconv.Itoa(id))
+		status(node, "calling closest_preceding_finger for " + strconv.Itoa(id))
 		p := closest_preceding_finger(node, id)
 
 		//now recursively call the closer node
@@ -220,7 +277,7 @@ func find_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
 	
 	}
 }
-	
+*/	
 
 
 
@@ -243,15 +300,16 @@ func find_successor(node *ChordNode, req *Request, encoder *json.Encoder){
 		//This node can return its own successor
 		found_successor = node.Successor
 	} else {
+
+		
 		//We know the predecessor, now we ask that predecessor for its successor
 		encoder_successor, decoder_successor := createConnection(result)
-		m_successor := Request{"get_succcessor", nil}
+		m_successor := Request{"get_successor", nil}
 		encoder_successor.Encode(m_successor)
-		
+
 		res_successor := new(Response)
 		decoder_successor.Decode(&res_successor)
 
-		
 		found_successor = int(res_successor.Result.(float64))
 
 	
@@ -266,6 +324,49 @@ func find_successor(node *ChordNode, req *Request, encoder *json.Encoder){
 /////
 // Helper Functions
 /////
+
+func inChordRange(target int, start int, end int, m int )(result bool){
+
+	
+	if target >= start && target < end {
+		return true
+	} else if end < start {
+		//wrap around case, target is not wrapped around
+		if target >= start && target <= end + powerof(2, m) {
+			return true
+		} 
+	} else if (end < start) && (target < end) {
+		//wrap around case, target is wrapped around
+		if (target + powerof(2, m) >= start) && (target < end) {
+			return true
+		}
+	}
+
+	return false
+	
+}
+
+func inChordRange_Stablization(target int, start int, end int, m int )(result bool){
+
+	
+	if target > start && target < end {
+		return true
+	} else if end < start {
+		//wrap around case, target is not wrapped around
+		if target > start && target < end + powerof(2, m) {
+			return true
+		} 
+	} else if (end < start) && (target < end) {
+		//wrap around case, target is wrapped around
+		if (target + powerof(2, m) > start) && (target < end) {
+			return true
+		}
+	}
+
+	return false
+	
+}
+
 
 func powerof(x int, y int)(val int){
 	val = int(math.Pow(float64(x),float64(y)))
@@ -363,8 +464,6 @@ func init_finger_table(node *ChordNode)(){
 
 	res := new(Response)
 	decoder.Decode(&res)
-
-	
 	node.Successor = int(res.Result.(float64))
 
 
@@ -438,6 +537,7 @@ func update_others(node *ChordNode)(){
 	
 		status(node, "about to look for the predecessor")
 
+		//Calling this method on itself
 		encoder, decoder := createConnection(node.Identifier)
 		m := Request{"find_predecessor", incoming_finger}
 		encoder.Encode(m)
@@ -446,7 +546,6 @@ func update_others(node *ChordNode)(){
 		decoder.Decode(&res)
 		p := int(res.Result.(float64))
 
-		//p should be 0...
 		status(node, "update_others_find_predecessor result ")
 		fmt.Println(res.Result, i)
 		
@@ -465,6 +564,84 @@ func update_others(node *ChordNode)(){
 		
 	}
 	
+}
+
+//////
+// Stablization Functions
+//////
+
+func stablize(node *ChordNode){
+
+	//When n runs stablize it asks n's successor for the sucessor's predecessor p and decides if p should n successor instead
+
+	encoder, decoder := createConnection(node.Successor)
+	m := Request{"get_predecessor", nil}
+	encoder.Encode(m)
+
+	res := new(Response)
+	decoder.Decode(&res)
+	successor_predecessor := int(res.Result.(float64))
+
+	
+
+	//Is this necessary for when there is one node, to set the first successor?
+	start := node.Identifier
+	end := node.Successor 
+	if node.Identifier == node.Successor {
+		end = node.Successor + powerof(2, node.M)
+	}
+	
+	
+	if inChordRange_Stablization(successor_predecessor, start, end, node.M){
+		status(node, "Changing successor in stablize")
+		node.Successor = successor_predecessor
+	}
+	
+	encoder, decoder = createConnection(node.Successor)
+	m = Request{"notify", node.Identifier}
+	encoder.Encode(m)
+
+	res = new(Response)
+	decoder.Decode(&res)
+
+
+	fix_fingers(node)
+
+	
+}
+
+
+func notify(node *ChordNode, req *Request, encoder *json.Encoder){
+
+	n := int(req.Params.(float64))
+
+	if node.Predecessor == node.Identifier || inChordRange_Stablization(n, node.Predecessor, node.Identifier, node.M) {
+		status(node, "Changing predecessor in Notify")
+		node.Predecessor = n
+	}
+		
+	m := Response{nil, nil}
+	encoder.Encode(m)
+	return
+	
+}
+
+
+func fix_fingers(node *ChordNode){
+
+	//status(node, "in fix fingers")
+	
+	i := rand.Intn(node.M)
+
+	rand_finger := node.Identifier + powerof(2,i) % powerof(2,node.M)
+	
+	encoder, decoder := createConnection(node.Identifier)
+	m := Request{"find_successor", rand_finger}
+	encoder.Encode(m)
+	
+	res := new(Response)
+	decoder.Decode(&res)
+	node.Finger[rand_finger] = int(res.Result.(float64))
 }
 
 
@@ -488,6 +665,7 @@ func handleConnection(node *ChordNode, conn net.Conn){
 	case "find_predecessor" :
 		find_predecessor(node, req, encoder)
 	case "get_successor" :
+		fmt.Println("got call")
 		get_successor(node, req, encoder)
 	case "get_predecessor" :
 		get_predecessor(node, req, encoder)
@@ -497,6 +675,9 @@ func handleConnection(node *ChordNode, conn net.Conn){
 		set_predecessor(node, req, encoder)
 	case "update_finger_table" :
 		update_finger_table(node, req, encoder)
+	case "notify" :
+		notify(node, req, encoder)
+	
 
 	}
 
@@ -558,6 +739,18 @@ func main() {
 	if err != nil {
 		// handle error
 	}
+
+
+	//Perodic timer for stablize()
+	//concern that it may happen before join()?
+	ticker := time.NewTicker(time.Millisecond * 10000)
+	go func() {
+		for t := range ticker.C {
+			stablize(node)
+			_ = t
+		}
+	}()
+	
 	for {
 		if preform_join {
 			preform_join = false
@@ -569,7 +762,9 @@ func main() {
 			// handle error
 			continue
 		}
-		go handleConnection(node, conn) 
+		go handleConnection(node, conn)
+
+
 	}
 	
 }
