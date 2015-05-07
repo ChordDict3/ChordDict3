@@ -6,9 +6,12 @@ package main
 import (
 	"fmt"
 	"net/rpc"
+	"net"
+	"net/http"
+	"log"
 //	"encoding/json"
-	//"os"
-	//"strconv"
+	"os"
+	"strconv"
 	//"math/big"
 	//"math"
 	//"crypto/sha1"
@@ -56,10 +59,17 @@ func readTestConfig()(config *TestConfiguration){
 }
 
 //to handle all RPCs between Chord nodes
-func (c ChordNode) SendRPC(identifier string, serviceMethod string, args interface{}, reply interface{}) {
-	client, _ := rpc.Dial("tcp", identifier)
+func (c ChordNode) SendRPC(identifier string, serviceMethod string, args interface{}, reply interface{}) error {
+	client, err := rpc.Dial("tcp", identifier)
+	if err != nil {
+		log.Fatal("Dial error:", err)
+	}
 	defer client.Close()
-	client.Call(serviceMethod, args, reply)
+	err = client.Call(serviceMethod, args, reply)
+	if err != nil {
+		log.Fatal("call error:", err)
+	}
+	return nil
 }
 
 //generates sha1 hash of "ip:port" string; sha1 too large for int; using big.Int
@@ -94,40 +104,61 @@ func generateKeyRelHash(key string, rel string, m uint64) uint64 {
 }
 
 //CHORD FUNCTIONS
-//create a new chord ring
-func (c ChordNode) create() {
+//create a new chord ring. set predecessor to nil and successor to self
+func (c ChordNode) create() error {
 	node.Predecessor = ""
 	node.Successor = node.Identifier
-	return
+	return nil
 }
 
 //join an existing chord ring containing node with identifier
-func (c ChordNode) join(identifier string) {
+func (c ChordNode) join(identifier string) error {
 	node.Predecessor = ""
 	reply := ""
 	c.SendRPC(identifier, "ChordNode.find_successor", node.Identifier, &reply)
 	node.Successor = reply
 	//TODO: ask successor for all DICT3 data we should take from him
+	return nil
 }
 
 //find the immediate successor of node with given identifier
-func (c ChordNode) find_successor(identifier string, reply *string) {
+func (c ChordNode) find_successor(identifier string, reply *string) error {
 //the node being asked is the successor
 //is this smart to do? not setting predecessor on create; requires stabilize to run to work
-/*	if ((generateNodeHash(identifier) > generateNodeHash(node.Predecessor)) && (generateNodeHash(identifier) <= generateNodeHash(node.Identifier))) {
+	if ((generateNodeHash(identifier, node.M) > generateNodeHash(node.Predecessor, node.M)) && (generateNodeHash(identifier, node.M) <= generateNodeHash(node.Identifier, node.M))) {
 		*reply = node.Identifier
-	} else if ((generateNodeHash(identifier) < generateNodeHash(node.Successor)) && (generateNodeHash(identifier) > generateNodeHash(node.Predecessor))) {
+	} else if ((generateNodeHash(identifier, node.M) < generateNodeHash(node.Successor, node.M)) && (generateNodeHash(identifier, node.M) > generateNodeHash(node.Predecessor, node.M))) {
 		//node we're looking for is this node's successor
 		*reply = node.Successor
 	} else {
 		//find closest finger and forward request there
-	}*/
+	}
+	return nil
 }
 
-//func stabilize()
-//func notify(identifier string)
+//runs periodically. verifies immediate successor and tells successor about itself
+func (c ChordNode) stabilize() error {
+	reply := ""
+	c.SendRPC(node.Successor, "ChordNode.getPredecessor", "", &reply)
+	fmt.Println("successors predecessor is ", reply)
+	return nil
+}
+
+//node thinks it should be the predecessor
+func (c ChordNode) notify(identifier string) error {
+	if (node.Predecessor == "" || (node.HashID < generateNodeHash(identifier, node.M) && generateNodeHash(identifier, node.M) < generateNodeHash(node.Predecessor, node.M))) {
+		node.Predecessor = identifier
+	}
+	return nil
+}
+
+func (c ChordNode) getPredecessor(nothing string, reply *string) error {
+	*reply = node.Predecessor
+	return nil
+}
+
+
 //func fix_fingers()
-//func notify
 //func check_predecessor()
 
 /*
@@ -362,15 +393,14 @@ func status(node *ChordNode, msg string){
 func mod(m uint64, n uint64) uint64 {
 	return ((m % n) + n) % n
 }
-/*
+
 
 
 /////
 // Node setup Functions
 /////
 
-
-
+/*
 func readTestConfig()(config *TestConfiguration){
 
 	config = new(TestConfiguration)
@@ -591,7 +621,7 @@ func handleConnection(node *ChordNode, conn net.Conn){
 
 //}
 
-/*
+
 func main() {
 	// Parse argument configuration block
 	//node := new(ChordNode)
@@ -629,12 +659,36 @@ func main() {
 	fmt.Println("node identifier: "+node.Identifier)
 	fmt.Println("node successor: "+node.Successor)
 	fmt.Println("node hashID: ", node.HashID)
+
+	fmt.Println("Setting up a listener...")
+	
+	server := rpc.NewServer()
+	server.Register(node)
+	l, err := net.Listen(config.Protocol, node.Identifier)
+	if err != nil {
+		log.Fatal("Error!", err)
+	}
+	go http.Serve(l, nil)
+
+	fmt.Println("Listening on ", node.Identifier)	
+	
+    //Listen for a connection
+    _, err = l.Accept()
+    if err != nil {
+       fmt.Println("Error accepting connection: ", err.Error())
+       os.Exit(1)
+    }
+    
+    node.stabilize()
+
+
+
 /*
 	node.M = 3 // m-bit Key Space
 	node.HashID = node.Identifier
 	//TODO in the future: node.HashID = generateNodeHash(node.Identifier)
 	
-
+/*
 	node.Finger = make(map[int]int)
 	config.Port = "1000" + strconv.Itoa(node.Identifier)
 
@@ -679,10 +733,10 @@ func main() {
 			continue
 		}
 		go handleConnection(node, conn) 
-	}
+	}*/
 }
-*/
 
+/*
 func main() {
 	m := uint64(9)
 	fmt.Printf("%b\n", generateNodeHash("127.0.0.1:1000", m))
@@ -697,3 +751,4 @@ func main() {
 	fmt.Printf("%b\n", generateKeyRelHash(".ey", "rbl", m))
 	fmt.Printf("%b\n", generateKeyRelHash("vey", "ral", m))
 }
+*/
