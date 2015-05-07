@@ -313,9 +313,6 @@ func readConfig()(config *Configuration){
 	//fmt.Printf("Parsed : %+v", config)
 
 	return config
-
-	
-
 }
 
 
