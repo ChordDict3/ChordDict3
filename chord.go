@@ -15,6 +15,7 @@ import (
 	"math"
 	//"crypto/sha1"
 	"hash/crc64"
+	"time"
 )
 
 type ChordNode struct{
@@ -48,7 +49,9 @@ type TestConfiguration struct{
 	Port int
 }
 
+//////////////////
 //HELPER FUNCTIONS
+//////////////////
 func readTestConfig()(config *TestConfiguration){
 	config = new(TestConfiguration)
 	config.IpAddress = "127.0.0.1"
@@ -56,23 +59,8 @@ func readTestConfig()(config *TestConfiguration){
 
 	return config
 }
-/*
-//to handle all RPCs between Chord nodes
-func SendRPC(identifier string, serviceMethod string, args interface{}, reply interface{}) error {
-	client, err := rpc.DialHTTP("tcp", identifier)
-	if err != nil {
-		log.Fatal("Dial error:", err)
-	}
-	defer client.Close()
-	err = client.Call(serviceMethod, args, &reply)
-	if err != nil {
-		log.Fatal("call error:", err)
-	}
-	return nil
-}
-*/
 
-//create connection to other nodes
+//for RPCs
 func createConnection(identifier string) (encoder *json.Encoder, decoder *json.Decoder){
 	fmt.Println("Creating connection to ", identifier)
 	conn, err := net.Dial("tcp", identifier)
@@ -84,6 +72,7 @@ func createConnection(identifier string) (encoder *json.Encoder, decoder *json.D
 	
 	return e, d
 }
+
 //generates sha1 hash of "ip:port" string; sha1 too large for int; using big.Int
 //returning hash mod 2^m as the hash ID for the node
 func generateNodeHash(identifier string, m uint64) uint64 {
@@ -114,13 +103,9 @@ func generateKeyRelHash(key string, rel string, m uint64) uint64 {
 	return hash
 }
 
-
+//Determines if target hash is in a slice of the chord ring
 func inChordRange(target uint64, start uint64, end uint64, m uint64)(result bool){
-
-	//target 5
-	//start 3
-	//end 0
-	
+	//0 6 1
 	if target > start && target <= end {
 		return true
 	}
@@ -144,7 +129,9 @@ func powerof(x uint64, y uint64)(val uint64){
 	return val
 }
 
+/////////////////
 //CHORD FUNCTIONS
+/////////////////
 //create a new chord ring. set predecessor to nil and successor to self
 func get_successor(req *Request, encoder *json.Encoder){
 	m := Response{node.Successor, nil}
@@ -162,8 +149,8 @@ func get_predecessor(req *Request, encoder *json.Encoder){
 func set_predecessor(req *Request, encoder *json.Encoder){
 	id := req.Params.(string)
 	node.Predecessor = id
-	m := Response{nil, nil}
-	encoder.Encode(m)
+//	m := Response{nil, nil}
+//	encoder.Encode(m)
 	return
 }
 
@@ -188,7 +175,6 @@ func (c ChordNode) create() error {
 func join(identifier string) {
 	fmt.Println("entered join")
 	node.Predecessor = ""
-	//reply := ""
 
 	encoder, decoder := createConnection(identifier)
 	m := Request{"find_successor", node.Identifier}
@@ -203,19 +189,12 @@ func join(identifier string) {
 //find the immediate successor of node with given identifier
 func find_successor(req *Request, encoder *json.Encoder) {
 	identifier := req.Params.(string)
-	fmt.Println("in find_successor: identifier is ", identifier)
-	//res := new(Response)
-	fmt.Println("hash is ", generateNodeHash(identifier,node.M))
-	//probably shouldn't use node.predecessor; not set on create - requires stabilize to have been run to work
-/*	if (inChordRange(generateNodeHash(identifier, node.M), generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Identifier, node.M), node.M)) {
-		res := Response{node.Identifier, nil}
-		encoder.Encode(res)
-	} else */
 
 	if(node.Identifier == node.Successor) {
 		res := Response{node.Identifier, nil}
 		encoder.Encode(res)
 	} else if (inChordRange(generateNodeHash(identifier, node.M), generateNodeHash(node.Identifier, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
+		fmt.Println("inchordrange!")
 		res := Response{node.Successor, nil}
 		encoder.Encode(res)
 	} else {
@@ -226,30 +205,65 @@ func find_successor(req *Request, encoder *json.Encoder) {
 		res := new(Response)
 		decoder2.Decode(&res)
 		encoder.Encode(res) 
-
 	}
-	//encoder.Encode(res)
 }
 
-//runs periodically. verifies immediate successor and tells successor about itself
-func (c ChordNode) stabilize() error {
-	reply := ""
-	//SendRPC(node.Successor, "ChordNode.getPredecessor", "", &reply)
-	fmt.Println("successors predecessor is ", reply)
-	return nil
+//runs periodically:
+//verifies immediate successor and tells successor about itself
+//needs to also verify predecessor and tell predecessor about itself
+func stabilize() {
+	//verify immediate successor; tell successor about itself
+	encoder, decoder := createConnection(node.Successor)
+	m := Request{"get_predecessor", ""}
+	encoder.Encode(m)
+	res := new(Response)
+	decoder.Decode(&res)
+	successors_predecessor := res.Result.(string)
+	if (successors_predecessor == "") {
+		//successor has no predecesor; we should be the predecessor - there are only 2 nodes
+		m = Request{"set_predecessor", node.Identifier}
+		encoder.Encode(m)
+	} else if (node.Successor == node.Identifier) {
+		//successor is set to myself; 2 nodes and this was first node
+		node.Successor = successors_predecessor
+	}else if(inChordRange(generateNodeHash(successors_predecessor, node.M), generateNodeHash(node.Identifier, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
+		fmt.Println("stabilize: in chord range")
+		node.Successor = successors_predecessor		
+	} 
+	if(node.Identifier != node.Successor) {	
+		fmt.Println("going to notify ", node.Successor, "that ", node.Identifier, "should be his predecesor")	
+		encoder, decoder = createConnection(node.Successor)
+		m = Request{"notify", node.Identifier}
+		encoder.Encode(m)
+	} else if (inChordRange(generateNodeHash(node.Identifier, node.M), generateNodeHash(successors_predecessor, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
+		// me < succ_pred < succ; successor's predecessor should be my successor
+		if(node.Identifier != node.Successor) {	
+			fmt.Println("going to notify ", node.Successor, "that ", node.Identifier, "should be his predecesor")	
+			encoder, decoder = createConnection(node.Successor)
+			m = Request{"notify", node.Identifier}
+			encoder.Encode(m)
+		}
+	}	
 }
 
-//node thinks it should be the predecessor
-func (c ChordNode) notify(identifier string) error {
-	if (node.Predecessor == "" || (node.HashID < generateNodeHash(identifier, node.M) && generateNodeHash(identifier, node.M) < generateNodeHash(node.Predecessor, node.M))) {
+//check if identifier should be this node's predecessor
+func notify(req *Request, encoder *json.Encoder) {
+	identifier := req.Params.(string)
+	if (node.Predecessor == "") { 
+	//node has no predecessor, set identifier as node's predecessor
 		node.Predecessor = identifier
+		//res := Response{identifier, nil}
+		//encoder.Encode(res)
+	} else if (inChordRange(generateNodeHash(identifier, node.M), generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Identifier, node.M), node.M)) { 
+	//predecessor < identifier < node; ID should be pred
+		node.Predecessor = identifier
+		//res := Response{identifier, nil}
+		//encoder.Encode(res)
+	} else { 
+	//node's predecessor was already correct
+		//res := Response{node.Predecessor, nil}
+		//encoder.Encode(res)
 	}
-	return nil
-}
-
-func (c ChordNode) getPredecessor(nothing string, reply *string) error {
-	*reply = node.Predecessor
-	return nil
 }
 
 
@@ -706,6 +720,8 @@ func handleConnection(node *ChordNode, conn net.Conn){
 		set_successor(req, encoder)
 	case "set_predecessor" :
 		set_predecessor(req, encoder)
+	case "notify" :
+		notify(req, encoder)
 /*ase "update_finger_table" :
 		update_finger_table(node, req, encoder)
 	case "lookup" :
@@ -761,6 +777,21 @@ func main() {
 
 	fmt.Println("Listening on ", node.Identifier)	
 	
+
+	//ticker for stabilize
+	ticker := time.NewTicker(time.Millisecond * 5000)
+	go func() {
+		for t := range ticker.C {
+			stabilize()
+			fmt.Println("node identifier: "+node.Identifier)
+			fmt.Println("node successor: "+node.Successor)
+			fmt.Println("node predecessor: "+node.Predecessor)
+			fmt.Println("node hashID: ", node.HashID)
+
+			_ = t
+		}
+	}()
+
     //Listen for a connection
     for {
     	conn, err := l.Accept() // this blocks until connection or error
@@ -770,7 +801,6 @@ func main() {
 		go handleConnection(node, conn)
     }
     
-  //  node.stabilize()
 
 
 
