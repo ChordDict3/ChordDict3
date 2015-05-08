@@ -28,7 +28,7 @@ type Configuration struct{
 	ServerID string `json:"serverID"`
 	Protocol string `json:"protocol"`
 	IpAddress string `json:"ipAddress"`
-	Port int `json:"port"`
+	Port string `json:"port"`
 	//PersistentStorageContainer struct {
 	//	File string `json:"file"`
 	//} `json:"persistentStorageContainer"`
