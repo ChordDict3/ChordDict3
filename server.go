@@ -212,9 +212,16 @@ func insert(req *Request, encoder *json.Encoder, triplets *db.Col, update bool, 
 				if err != nil {
 					panic(err)
 				}
+
+				 
 			
 				dictVal := readBack["val"].(map[string]interface{})
 				//update content
+				if dictVal["Permission"] == "R" {
+					//No return value for insertOrUpdate() so returning silently
+					return
+				}
+				
 				dictVal["Content"] = val
 				//update with new Accessed/Modified time
 				now := time.Now()
@@ -232,6 +239,8 @@ func insert(req *Request, encoder *json.Encoder, triplets *db.Col, update bool, 
 		}
 	} else {
 		dictVal := makeDictValue(val, "RW")
+		//For testing the R permission
+		//dictVal := makeDictValue(val, "R")
 		_, err := triplets.Insert(map[string]interface{}{
 			"key": key,
 			"rel": rel,
@@ -260,12 +269,20 @@ func delete(req *Request, triplets *db.Col){
 
 	queryResult := query_key_rel(key, rel, triplets)
 
-	// Query result are document IDs
-	for id := range queryResult {
-		//fmt.Println("Deleting ", id)
-		if err := triplets.Delete(id); err != nil {
+	for i := range queryResult {
+		readBack, err := triplets.Read(i)
+		if err != nil {
 			panic(err)
 		}
+			
+		dictVal := readBack["val"].(map[string]interface{})
+		//Check permissions before deleting, can't delete if "R"
+		if dictVal["Permission"] == "RW" {
+			if err := triplets.Delete(i); err != nil {
+				panic(err)
+			}
+		}
+		
 	}
 }
 

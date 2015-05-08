@@ -29,9 +29,9 @@ type Configuration struct{
 	IpAddress string `json:"ipAddress"`
 	Port string `json:"port"`
 	M uint64 `json:"M"`
-	PersistentStorageContainer struct {
-		File string `json:"file"`
-	} `json:"persistentStorageContainer"`
+	//PersistentStorageContainer struct {
+		//File string `json:"file"`
+	//} `json:"persistentStorageContainer"`
 	Methods []string `json:"methods"`
 }
 

@@ -1,0 +1,9 @@
+{
+"serverID" : "mynameisPooh",
+"protocol" : "tcp",
+"ipAddress" : "127.0.0.1",
+"port" : "5555",
+"persistentStorageContainer" : {"file":"tiedotDB"},
+"M": 16,
+"methods" : ["lookup", "insert", "delete", "listKeys", "listIDs", "shutdown"]
+}
