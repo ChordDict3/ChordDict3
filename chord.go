@@ -5,13 +5,15 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/rpc"
-//	"encoding/json"
-	//"os"
-	//"strconv"
-	//"math/big"
-	//"math"
+	"os"
+	"reflect"
+	"time"
+	"math"
+	"io/ioutil"
 	"hash/crc64"
+	"encoding/json"
 	"github.com/HouzuoGuo/tiedot/db"
 )
 
@@ -21,12 +23,10 @@ type NodeInfo struct{	// contains hash and connection info
 }
 
 type ChordNode struct{
-	Me NodeInfo
-	Successor NodeInfo
-	Predecessor NodeInfo
+	Me, Successor, Predecessor NodeInfo
 	FingerTable []NodeInfo
 	M uint64 
-	Dict3 db.Col
+	Dict3 *db.Col
 	//Keys []uint64
 }
 
@@ -45,11 +45,20 @@ type Configuration struct{
 	Protocol string `json:"protocol"`
 	IpAddress string `json:"ipAddress"`
 	Port string `json:"port"`
-	M uint64
+	M uint64 `json:"M"`
 	PersistentStorageContainer struct {
 		File string `json:"file"`
 	} `json:"persistentStorageContainer"`
 	Methods []string `json:"methods"`
+}
+
+type DictValue struct {
+	Content interface{}
+	Size float64 
+	Created time.Time
+	Modified time.Time
+	Accessed time.Time
+	Permission string
 }
 
 //to handle all RPCs between Chord nodes
@@ -66,7 +75,7 @@ func generateNodeHash(identifier string, m uint64) uint64 {
 	hasher := crc64.New(crc64.MakeTable(123456789)) //any number will do
 	hasher.Write([]byte(identifier))
 	hash64 := hasher.Sum64()
-	hash := mod(hash64, uint64(1 << m))
+	hash := hash64 % uint64(1 << m)
 	return hash 
 }
 
@@ -74,7 +83,7 @@ func generateKeyRelHash(key string, rel string, m uint64) uint64 {
 	keyHash := generateNodeHash(key, m)
 	relHash := generateNodeHash(rel, m)
 	shiftOffset := uint64(0)
-	if (mod(m, uint64(2)) != 0) {  // if m is odd, additional shift needed
+	if (m % 2 != 0) {  // if m is odd, additional shift needed
 		shiftOffset = uint64(1)
 	}
 		
@@ -90,21 +99,35 @@ func generateKeyRelHash(key string, rel string, m uint64) uint64 {
 	return hash
 }
 
+func makeDictValue(content interface{}, permission string) DictValue {
+	now := time.Now()
+	dictVal := DictValue{
+		Content: content,
+		Size: float64(reflect.TypeOf(content).Size()),
+		Created: now,
+		Modified: now,
+		Accessed: now,
+		Permission: permission,
+	}
+	return dictVal
+}
+
 //CHORD FUNCTIONS
 //create a new chord ring
 func create(configuration Configuration) *ChordNode{
-	myIdentifier := generateNodeHash(configuration.IpAddress + ":" + configuration.Port)
+	myIdentifier := generateNodeHash(configuration.IpAddress + ":" + configuration.Port, (1 << configuration.M))
 	
 	myDBDir := configuration.PersistentStorageContainer.File
 	// (Create if not exist) open a database
 	myDB, err := db.OpenDB(myDBDir)
 	if err != nil {
 		panic(err)
-	}	
-	if err := myDB.Create("Triplets"); err != nil {
+	}
+	dbName := "Triplets"+configuration.Port
+	if err := myDB.Create(dbName); err != nil {
 		panic(err)
 	}	
-	triplets := myDB.Use("Triplets")
+	triplets := myDB.Use(dbName)
 	// Create indexes here??
 	// TODO: Do not create index if it already exists?
 	if err := triplets.Index([]string{"key"}); err != nil {
@@ -114,20 +137,24 @@ func create(configuration Configuration) *ChordNode{
 		panic(err)
 	}
 	c := ChordNode{
-		Me: NodeInfo{Identifier: myIdentifier, IpAddress: configuration.IpAddress, Port: configuration.Port}
-		Successor = nil
-		Predecessor = nil
-		FingerTable = make([]NodeInfo)
-		M: configuration.M
-		Dict3: triplets
+		Me: NodeInfo{Identifier: myIdentifier,
+			IpAddress: configuration.IpAddress,
+			Port: configuration.Port,
+		},
+		Successor: NodeInfo{},
+		Predecessor: NodeInfo{},
+		FingerTable: make([]NodeInfo, 0),
+		M: configuration.M,
+		Dict3: triplets,
 	}
-	return c
+	return &c
 }
 
 //join an existing chord ring containing node with identifier
 func (c ChordNode) join(ringNode NodeInfo) {
-	node.Predecessor = nil
-	c.get_successor(c.Me.Identifier)
+	c.Predecessor = NodeInfo{}
+	c.Successor = c.get_successor(c.Me.Identifier)
+	fmt.Println(c.Successor)
 	//TODO: ask successor for all DICT3 data we should take from him
 }
 
@@ -141,15 +168,28 @@ func (c ChordNode) get_successor(identifier uint64) NodeInfo {
 		return c.Successor
 	} else {
 		//find closest finger and forward request there
-		// but for now just return Successor
-		return c.Successor
+		// but for now just connect to successor
+		return c.remote_get_successor(c.Successor, identifier)
 	}
 }
 
-func (c ChordNode) remote_get_successor(remoteNode NodeInfo) NodeInfo {
+func (c ChordNode) remote_get_successor(remoteNode NodeInfo, identifier uint64) NodeInfo {
 	e, d := createConnection(remoteNode)
+	req := Request{Method: "get_successor", Params: identifier}
+	e.Encode(req)
+	resp := new(Response)
+	d.Decode(&resp)
+	fmt.Println(resp.Result.(NodeInfo))
+	return resp.Result.(NodeInfo)
 }
 
+func handle_remote_get_successor(n *ChordNode, req *Request, encoder *json.Encoder) {
+	fmt.Println("handle_remote_get_successor")
+	identifier := req.Params.(uint64)
+	successor := n.get_successor(identifier)
+	resp := Response{successor, nil}
+	encoder.Encode(resp)
+}
 //func stabilize()
 //func notify(identifier string)
 //func fix_fingers()
@@ -233,7 +273,7 @@ closest_preceding_finger
 if finger[i].node in (n, id):
 return finger[i].node
 */
-
+/*
 func closest_preceding_finger(node *ChordNode, id int)(current_finger int){
  	for i := node.M - 1; i >= 0 ; i-- {
 		current_finger = node.Finger[node.Identifier + powerof(2,i) % powerof(2,node.M)]
@@ -358,7 +398,7 @@ func powerof(x int, y int)(val int){
 }
 
 func status(node *ChordNode, msg string){
-	fmt.Println("Ident: ", node.Identifier, " P: ", node.Predecessor, " S: ", node.Successor, " F: ", node.Finger, " ",  msg)
+	fmt.Println("Ident: ", node.Me.Identifier, " P: ", node.Predecessor, " S: ", node.Successor, " " ,  msg)
 } 
 
 //Because golang's % of negative numbers is broken
@@ -503,6 +543,16 @@ func update_others(node *ChordNode)(){
 //////
 // Dict functions
 //////
+func insertValueIntoTriplets(key string, rel string, val map[string]interface{}, triplets *db.Col) {
+	_, err := triplets.Insert(map[string]interface{}{
+		"key": key,
+		"rel": rel,
+		"val": val})
+	if (err != nil) {
+		panic(err)
+	}
+}
+
 func query_key_rel(key string, rel string, triplets *db.Col) (queryResult map[int]struct{}){
 
 	var query interface{}
@@ -521,7 +571,7 @@ func query_key_rel(key string, rel string, triplets *db.Col) (queryResult map[in
 }
 
 func lookup(n *ChordNode, req *Request, encoder *json.Encoder) {
-	triplets = n.Dict3
+	triplets := n.Dict3
 
 	p := req.Params
 	arr := p.([]interface{})
@@ -550,20 +600,21 @@ func lookup(n *ChordNode, req *Request, encoder *json.Encoder) {
 		
 	} else {	// Key/rel not in DB
 		//get hash for key/rel
-		keyRelHash := generateKeyRelHash(key, rel, node.M)
+		keyRelHash := generateKeyRelHash(key, rel, n.M)
 		//find closest successor/finger node for keyRelHash
-		succesor := get_successor()
+		successor := n.get_successor(keyRelHash)
 		//forward request to successor
 		forwardEncoder, decoder := createConnection(successor)
 		forwardEncoder.Encode(req)
 		resp := new(Response)
-		resp = decoder.Decode(&resp)
+		decoder.Decode(&resp)
 		encoder.Encode(resp)
 	}
 }
 
 func insert(n *ChordNode, req *Request, encoder *json.Encoder, update bool){
-	triplets = n.Dict3
+	fmt.Println("entering insert")
+	triplets := n.Dict3
 
 	p := req.Params
 	arr := p.([]interface{})
@@ -572,13 +623,16 @@ func insert(n *ChordNode, req *Request, encoder *json.Encoder, update bool){
 	rel := arr[1].(string)
 	val := arr[2]
 
+	keyRelHash := generateKeyRelHash(key, rel, n.M)
+	fmt.Printf("keyRelHash: %b\n", keyRelHash)
 	// get successor; if Me, then insert into DB, else forward
-	successor := get_successor()
+	successor := n.get_successor(keyRelHash)
+	fmt.Println(successor)
 	if (successor.Identifier != n.Me.Identifier) {
 		forwardEncoder, decoder := createConnection(successor)
-		forwardEncoder(req)
+		forwardEncoder.Encode(req)
 		resp := new(Response)
-		resp = decoder.Decode(&resp)
+		decoder.Decode(&resp)
 		encoder.Encode(resp)
 	} else {	
 		// See if there this key/val is already in DB
@@ -636,22 +690,23 @@ func handleConnection(node *ChordNode, conn net.Conn){
 	decoder.Decode(&req)
 
 	//status(node, req.Method)
-	
+
+	fmt.Println("deciding method: " + req.Method)
 	switch req.Method {
 		case "find_successor" :
-			find_successor(node, req, encoder)
-		case "find_predecessor" :
-			find_predecessor(node, req, encoder)
-		case "get_successor" :
-			get_successor(node, req, encoder)
-		case "get_predecessor" :
-			get_predecessor(node, req, encoder)
-		case "set_successor" :
-			set_successor(node, req, encoder)
-		case "set_predecessor" :
-			set_predecessor(node, req, encoder)
-		case "update_finger_table" :
-			update_finger_table(node, req, encoder)
+			handle_remote_get_successor(node, req, encoder)
+//		case "find_predecessor" :
+//			find_predecessor(node, req, encoder)
+//		case "get_successor" :
+//			get_successor(node, req, encoder)
+//		case "get_predecessor" :
+//			get_predecessor(node, req, encoder)
+//		case "set_successor" :
+//			set_successor(node, req, encoder)
+//		case "set_predecessor" :
+//			set_predecessor(node, req, encoder)
+//		case "update_finger_table" :
+//			update_finger_table(node, req, encoder)
 		case "lookup" :
 			lookup(node, req, encoder)
 		case "insert" :
@@ -681,10 +736,18 @@ func readConfig()(config *Configuration){
 
 func main() {
 	// Parse argument configuration block
-	config := readConfiguration()
+	config := *readConfig()
 	fmt.Println("creating node...")
 	node := create(config)
-	fmt.Println("node identifier: " + string(node.Me.Identifier)
+	fmt.Printf("node identifier: %b\n", node.Me.Identifier)
+
+	if(len(os.Args) > 2) {
+		ringNodeIpAddress := os.Args[2]
+		ringNodePort := os.Args[3]
+		address := ringNodeIpAddress + ":" + ringNodePort
+		ringNode := NodeInfo{generateNodeHash(address, node.M), ringNodeIpAddress, ringNodePort}
+		node.join(ringNode)
+	}
 
 	networkaddress := config.IpAddress + ":" + config.Port
 	ln, err := net.Listen("tcp", networkaddress)
@@ -692,14 +755,10 @@ func main() {
 		panic(err)
 	}
 	for {
-		if preform_join {
-			preform_join = false
-			go join(node)
-		}
-
+		fmt.Println("listening...")
 		conn, err := ln.Accept() // this blocks until connection or error
 		if err != nil {
-			continue
+			panic(err)	
 		}
 		go handleConnection(node, conn) 
 	}

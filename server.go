@@ -42,7 +42,6 @@ type Configuration struct{
 		File string `json:"file"`
 	} `json:"persistentStorageContainer"`
 	Methods []string `json:"methods"`
-
 }
 
 func makeDictValue(content interface{}, permission string) DictValue {
