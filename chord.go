@@ -209,12 +209,12 @@ func (node *ChordNode)set_successor(req *Request, encoder *json.Encoder){
 }
 
 func (node *ChordNode)successor_of_hash(hash uint64) string {
-	if (hash == generateNodeHash(node.Me, node.M)) {
+	if (inChordRange(hash, generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Me, node.M), node.M)) {
 		return node.Me
-	} else if (generateNodeHash(node.Me, node.M) < hash && hash <= generateNodeHash(node.Successor, node.M)) {
+	} else if (inChordRange(hash, generateNodeHash(node.Me, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
 		return node.Successor
 	} else {
-		return node.Successor //will be finger table in future
+		return node.Successor
 	}
 }
 
@@ -440,7 +440,7 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 	fmt.Printf("keyRelHash: %b\n", keyRelHash)
 	// get successor; if Me, then insert into DB, else forward
 	successor := n.successor_of_hash(keyRelHash)
-	fmt.Println(successor)
+	fmt.Println("successor: " + successor)
 	if (successor != n.Me) {
 		forwardEncoder, decoder := createConnection(successor)
 		forwardEncoder.Encode(req)
