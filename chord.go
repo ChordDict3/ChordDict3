@@ -425,6 +425,35 @@ func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
 	}
 }
 
+func (n *ChordNode)delete(req *Request, encoder *json.Encoder){
+
+	p := req.Params
+	arr := p.([]interface{})
+	
+	key := arr[0].(string)
+	rel := arr[1].(string)
+
+
+	queryResult := query_key_rel(key, rel, triplets)
+
+	for i := range queryResult {
+		readBack, err := triplets.Read(i)
+		if err != nil {
+			panic(err)
+		}
+			
+		dictVal := readBack["val"].(map[string]interface{})
+		//Check permissions before deleting, can't delete if "R"
+		if dictVal["Permission"] == "RW" {
+			if err := triplets.Delete(i); err != nil {
+				panic(err)
+			}
+		}
+		
+	}
+
+}
+
 func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 	fmt.Println("entering insert")
 	triplets := n.Dict3
@@ -530,6 +559,8 @@ func handleConnection(node *ChordNode, conn net.Conn){
 		node.lookup(req, encoder)
 	case "insert" :
 		node.insert(req, encoder, true)
+	case "delete" :
+		node.delete(req, encoder)
 	}
 }
 
