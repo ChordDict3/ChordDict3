@@ -60,17 +60,36 @@ type DictValue struct {
 	Accessed time.Time
 	Permission string
 }
-
+/*
 //to handle all RPCs between Chord nodes
-func (c ChordNode) SendRPC(identifier string, serviceMethod string, args interface{}, reply interface{}) {
-	client, _ := rpc.Dial("tcp", identifier)
+func SendRPC(identifier string, serviceMethod string, args interface{}, reply interface{}) error {
+	client, err := rpc.DialHTTP("tcp", identifier)
+	if err != nil {
+		log.Fatal("Dial error:", err)
+	}
 	defer client.Close()
-	client.Call(serviceMethod, args, reply)
+	err = client.Call(serviceMethod, args, &reply)
+	if err != nil {
+		log.Fatal("call error:", err)
+	}
+	return nil
 }
+*/
 
+//create connection to other nodes
+func createConnection(identifier string) (encoder *json.Encoder, decoder *json.Decoder){
+	fmt.Println("Creating connection to ", identifier)
+	conn, err := net.Dial("tcp", identifier)
+	if err != nil {
+		fmt.Println("Connection error", err)
+	}
+	e := json.NewEncoder(conn)
+	d := json.NewDecoder(conn)
+	
+	return e, d
+}
 //generates sha1 hash of "ip:port" string; sha1 too large for int; using big.Int
 //returning hash mod 2^m as the hash ID for the node
-//still returning *big.Int; want int - needs work
 func generateNodeHash(identifier string, m uint64) uint64 {
 	hasher := crc64.New(crc64.MakeTable(123456789)) //any number will do
 	hasher.Write([]byte(identifier))
@@ -144,246 +163,144 @@ func create(configuration Configuration) *ChordNode{
 	return &c
 }
 
-//join an existing chord ring containing node with identifier
-func (c *ChordNode) join(ringNode NodeInfo) {
-	c.Predecessor = NodeInfo{}
-	c.Successor = ringNode
-	//c.Successor = c.get_successor(c.Me.Identifier)
-	fmt.Println(c.Successor)
-	//TODO: ask successor for all DICT3 data we should take from him
-}
+func inChordRange(target uint64, start uint64, end uint64, m uint64)(result bool){
 
-//find the immediate successor of node with given identifier
-func (c *ChordNode) get_successor(identifier uint64) NodeInfo {
-//the node being asked is the successor
-//is this smart to do? not setting predecessor on create; requires stabilize to run to work
-	if (identifier > c.Predecessor.Identifier) && (identifier <= c.Me.Identifier) {
-		return c.Me
-	} else if (identifier < c.Successor.Identifier) && (identifier > c.Me.Identifier) {
-		return c.Successor
-	} else {
-		//find closest finger and forward request there
-		// but for now just connect to successor
-		return c.remote_get_successor(c.Successor, identifier)
+	//target 5
+	//start 3
+	//end 0
+	
+	if target > start && target <= end {
+		return true
 	}
+	if end < start {
+		//wrap around case, target is not wrapped around
+		if target > start && target <= end + powerof(2, m) {
+			return true
+		} 
+	}
+	if (end < start) && (target <= end) {
+		//wrap around case, target is wrapped around
+		if (target + powerof(2, m) > start) && (target <= end) {
+			return true
+		}
+	}
+	return false
 }
 
-func (c *ChordNode) remote_get_successor(remoteNode NodeInfo, identifier uint64) NodeInfo {
-	fmt.Println(remoteNode)
-	e, d := createConnection(remoteNode)
-	req := Request{Method: "get_successor", Params: identifier}
-	e.Encode(req)
-	resp := new(Response)
-	d.Decode(&resp)
-	fmt.Println(resp.Result.(NodeInfo))
-	return resp.Result.(NodeInfo)
+func powerof(x uint64, y uint64)(val uint64){
+	val = uint64(math.Pow(float64(x),float64(y)))
+	return val
 }
 
-func handle_remote_get_successor(n *ChordNode, req *Request, encoder *json.Encoder) {
-	fmt.Println("handle_remote_get_successor")
-	identifier := req.Params.(uint64)
-	successor := n.get_successor(identifier)
-	resp := Response{successor, nil}
-	encoder.Encode(resp)
-}
-//func stabilize()
-//func notify(identifier string)
-//func fix_fingers()
-//func notify
-//func check_predecessor()
+//CHORD FUNCTIONS
+//create a new chord ring. set predecessor to nil and successor to self
+func get_successor(req *Request, encoder *json.Encoder){
+	m := Response{node.Successor, nil}
+	encoder.Encode(m)
+	return
 
-/////
-// RPC Functions
-////
-/*
-func get_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
-	status(node, "sending predecessor" + strconv.Itoa(node.Predecessor))
+}
+
+func get_predecessor(req *Request, encoder *json.Encoder){
 	m := Response{node.Predecessor, nil}
 	encoder.Encode(m)
 	return
 }
 
-func set_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
-	id := int(req.Params.(float64))
+func set_predecessor(req *Request, encoder *json.Encoder){
+	id := req.Params.(string)
 	node.Predecessor = id
-	status(node, "set_predecessor")
 	m := Response{nil, nil}
 	encoder.Encode(m)
 	return
 }
 
-func set_successor(node *ChordNode, req *Request, encoder *json.Encoder){
-	id := int(req.Params.(float64))
+func set_successor(req *Request, encoder *json.Encoder){
+	id := req.Params.(string)
 	node.Successor = id
 	
-	status(node, "Successor updated")
-	
-	
+	//status(node, "Successor updated")
+		
 	m := Response{nil, nil}
 	encoder.Encode(m)
 	return
 }
 
-func update_finger_table(node *ChordNode, req *Request, encoder *json.Encoder){
-	arr := req.Params.([]interface{})
-	
-	s := int(arr[0].(float64))
-	i := int(arr[1].(float64))
+func (c ChordNode) create() error {
+	node.Predecessor = ""
+	node.Successor = node.Identifier
+	return nil
+}
 
-	status(node, "update_finger_table")
-	//set Successor here if Finger[0] gets updated
-	//The second check is to cover if the interval wraps around
-	
-	//TODO - make this cleaner
-	if (s > node.Identifier && s < node.Finger[node.Identifier + powerof(2,i-1) % powerof(2,node.M)]) || ( (node.Identifier < s) && ((s > node.Identifier) && (s < node.Finger[node.Identifier + powerof(2,i-1) % powerof(2,node.M)] + powerof(2,node.M))))    {
-		
-		status(node, "update_finger_table Finger being updated")
-		node.Finger[node.Identifier + powerof(2,i-1) % powerof(2,node.M)] = s
-				
-		//Updating Successor
-		if i == 1 {
-			node.Successor = node.Finger[node.Identifier + powerof(2,i-1) % powerof(2,node.M)]
-		}
+//join an existing chord ring containing node with identifier
+func join(identifier string) {
+	fmt.Println("entered join")
+	node.Predecessor = ""
+	//reply := ""
 
-		arr = []interface{}{s, i}
-		encoder_predecessor, decoder_predecessor := createConnection(node.Predecessor)
-		m_predecessor := Request{"update_finger_table", arr}
-		encoder_predecessor.Encode(m_predecessor)
-		
+	encoder, decoder := createConnection(identifier)
+	m := Request{"find_successor", node.Identifier}
+	encoder.Encode(m)
+	res := new(Response)
+	decoder.Decode(&res)
+	node.Successor = res.Result.(string)
+	//TODO: ask successor for all DICT3 data we should take from him
+}
+
+//find the immediate successor of node with given identifier
+func find_successor(req *Request, encoder *json.Encoder) {
+	identifier := req.Params.(string)
+	fmt.Println("in find_successor: identifier is ", identifier)
+	//res := new(Response)
+	fmt.Println("hash is ", generateNodeHash(identifier,node.M))
+	//probably shouldn't use node.predecessor; not set on create - requires stabilize to have been run to work
+/*	if (inChordRange(generateNodeHash(identifier, node.M), generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Identifier, node.M), node.M)) {
+		res := Response{node.Identifier, nil}
+		encoder.Encode(res)
+	} else */
+
+	if(node.Identifier == node.Successor) {
+		res := Response{node.Identifier, nil}
+		encoder.Encode(res)
+	} else if (inChordRange(generateNodeHash(identifier, node.M), generateNodeHash(node.Identifier, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
+		res := Response{node.Successor, nil}
+		encoder.Encode(res)
+	} else {
+		//find closest finger and forward request there; for now just forward around ring
+		encoder2, decoder2 := createConnection(node.Successor)
+		m := Request{"find_successor", identifier}
+		encoder2.Encode(m)
 		res := new(Response)
-		decoder_predecessor.Decode(&res)
-
-
-	} 
-
-	status(node, "update_finger_table finished")
-	
-	m := Response{nil, nil}
-	encoder.Encode(m)
-	return
-}
-*/
-/*
-closest_preceding_finger
-
-if finger[i].node in (n, id):
-return finger[i].node
-*/
-/*
-func closest_preceding_finger(node *ChordNode, id int)(current_finger int){
- 	for i := node.M - 1; i >= 0 ; i-- {
-		current_finger = node.Finger[node.Identifier + powerof(2,i) % powerof(2,node.M)]
-
-		fmt.Println("ident ", node.Identifier, "CF ", current_finger, "id ", id)
-
-		//Have to handle the wrap around case too
-
-		//lower_bound = 1
-		//upper_bound = 0
-		//current_finger = 0
-		
-		lower_bound := node.Identifier
-		upper_bound := id
-		
-		if current_finger > lower_bound && current_finger <= upper_bound {
-			return current_finger
-		}
-		
-		//wrap around case, current_finger is not wrapped around
-		if upper_bound < lower_bound {
-		
-			if current_finger > lower_bound && current_finger <= upper_bound + powerof(2, node.M) {
-				return current_finger
-			} 
-		}
-
-		//wrap around case, current_finger is wrapped around
-		if (upper_bound < lower_bound) && (current_finger <= upper_bound) {
-			if (current_finger + powerof(2, node.M) > lower_bound) && (current_finger <= upper_bound) {
-				return current_finger
-			}
-		}
-
-		//if (current_finger > node.Identifier && current_finger <= id) || ((id < node.Identifier) && ((current_finger + powerof(2, node.M) > node.Identifier) && (current_finger + powerof(2, node.M) <= id + powerof(2, node.M)))) {
-		//	return current_finger
-		//}
+		decoder2.Decode(&res)
+		encoder.Encode(res) 
 
 	}
-	//Somethings wrong
-	fmt.Println("closest_preceding_finger failed")
-	os.Exit(0)
-	return -1
+	//encoder.Encode(res)
 }
 
-func find_predecessor(node *ChordNode, req *Request, encoder *json.Encoder){
+//runs periodically. verifies immediate successor and tells successor about itself
+func (c ChordNode) stabilize() error {
+	reply := ""
+	//SendRPC(node.Successor, "ChordNode.getPredecessor", "", &reply)
+	fmt.Println("successors predecessor is ", reply)
+	return nil
+}
 
-	id := int(req.Params.(float64))
-
-	//See if the id is in section of the ring that this node is responsible for
-	//Could be improved??
-	if id == node.Identifier || id > node.Identifier && id < node.Successor || ((node.Successor < node.Identifier) && ((id > node.Identifier) && (id < node.Successor + powerof(2,node.M)))) || node.Identifier == node.Successor {
-		status(node, "find_predecessor "+"id " + strconv.Itoa(id) + " result " + strconv.Itoa(node.Identifier))
-		msg := Response{node.Identifier, nil}
-		encoder.Encode(msg)
-			
-	} else {
-		//now check the finger table to get a new node to check
-		status(node, "calling closest_preceding_finger looking for " + strconv.Itoa(id))
-		p := closest_preceding_finger(node, id)
-
-		//now recursively call the closer node
-			
-		encoder_predecessor, decoder_predecessor := createConnection(p)
-		m_predecessor := Request{"find_predecessor", id}
-		encoder_predecessor.Encode(m_predecessor)
-		
-		res_predecessor := new(Response)
-		decoder_predecessor.Decode(&res_predecessor)
-		
-		status(node, "find_predecessor "+"id " + strconv.Itoa(id) + " result " + strconv.Itoa(int(res_predecessor.Result.(float64))))
-		msg := Response{res_predecessor.Result.(float64), nil}
-		encoder.Encode(msg)
+//node thinks it should be the predecessor
+func (c ChordNode) notify(identifier string) error {
+	if (node.Predecessor == "" || (node.HashID < generateNodeHash(identifier, node.M) && generateNodeHash(identifier, node.M) < generateNodeHash(node.Predecessor, node.M))) {
+		node.Predecessor = identifier
 	}
+	return nil
 }
-/*
-func find_successor(node *ChordNode, req *Request, encoder *json.Encoder){
-	id := int(req.Params.(float64))
-	
-	encoder_predecessor, decoder_predecessor := createConnection(node.Identifier)
-	m_predecessor := Request{"find_predecessor", id}
-	encoder_predecessor.Encode(m_predecessor)
 
-	res_predecessor := new(Response)
-	decoder_predecessor.Decode(&res_predecessor)
-
-
-	result := int(res_predecessor.Result.(float64))
-
-	found_successor := 0
-	
-	if result == node.Identifier {
-		//This node can return its own successor
-		found_successor = node.Successor
-	} else {
-		//We know the predecessor, now we ask that predecessor for its successor
-		encoder_successor, decoder_successor := createConnection(result)
-		m_successor := Request{"get_succcessor", nil}
-		encoder_successor.Encode(m_successor)
-		
-		res_successor := new(Response)
-		decoder_successor.Decode(&res_successor)
-
-		
-		found_successor = int(res_successor.Result.(float64))
-
-	
-	}
-
-	m := Response{found_successor, nil}
-	encoder.Encode(m)
-	return
+func (c ChordNode) getPredecessor(nothing string, reply *string) error {
+	*reply = node.Predecessor
+	return nil
 }
-*/
+//func fix_fingers()
+//func check_predecessor()
+
 /////
 // Helper Functions
 /////
@@ -406,6 +323,26 @@ func mod(m uint64, n uint64) uint64 {
 /////
 // Node setup Functions
 /////
+func readConfig()(config *Configuration){
+
+	dat, err := ioutil.ReadFile(os.Args[1])
+	if err != nil {
+		//fmt.Println("Error reading file")
+		panic(err)
+	}
+
+	b_arr := []byte(string(dat))
+
+	config = new(Configuration)
+	if err := json.Unmarshal(b_arr, &config); err != nil {
+		panic(err)
+	}
+
+	//fmt.Printf("Parsed : %+v", config)
+
+	return config
+}
+
 func createConnection(node NodeInfo) (encoder *json.Encoder, decoder *json.Decoder){
 	conn, err := net.Dial("tcp", node.IpAddress + ":" + node.Port)
 	if err != nil {
@@ -416,126 +353,7 @@ func createConnection(node NodeInfo) (encoder *json.Encoder, decoder *json.Decod
 	
 	return e, d
 }
-/*
-func join(node *ChordNode)(){
 
-	init_finger_table(node)
-	update_others(node)
-	status(node, "Finish Join")
-	
-}
-
-
-func init_finger_table(node *ChordNode)(){
-	//Asking bootstrap for successor of beginning of the the first finger's starting interval
-	start := (node.Identifier + powerof(2,0) % powerof(2,node.M))
-
-	encoder, decoder := createConnection(node.Bootstrap)
-	m := Request{"find_successor", start}
-	encoder.Encode(m)
-
-	res := new(Response)
-	decoder.Decode(&res)
-	
-	node.Successor = int(res.Result.(float64))
-
-
-	//first finger is successor
-	node.Finger[node.Identifier + powerof(2,0) % powerof(2,node.M)] = node.Successor
-
-	//get this successor's predecessor, which becomes the current node's predecessor
-	encoder, decoder = createConnection(node.Successor)
-	m = Request{"get_predecessor", nil}
-	encoder.Encode(m)
-
-	res = new(Response)
-	decoder.Decode(&res)
-	node.Predecessor = int(res.Result.(float64))
-	
-	status(node, "Do we have the right predecessor, successor?")
-
-
-	//set the successor's predecessor to the current node
-	encoder, decoder = createConnection(node.Successor)
-	m = Request{"set_predecessor", node.Identifier}
-	encoder.Encode(m)
-
-	res = new(Response)
-	decoder.Decode(&res)
-
-	//loop through finger list to update fingars
-	status(node, "looping through finger list to update")
-	for i := 1; i < node.M; i++ {
-
-		start = node.Identifier + powerof(2,i) % powerof(2,node.M)
-		previous_finger :=  node.Finger[node.Identifier + powerof(2,i-1) % powerof(2,node.M)]
-
-		//if the start of this finger is less that the node for the previous finger (see the i-1), it is also the node for this finger
-		//handle wrap-around case
-
-		if (start < node.Finger[previous_finger]) || ((node.Finger[previous_finger] < start) && (start < node.Finger[previous_finger] + powerof(2,node.M)))  {
-			node.Finger[start] = node.Finger[previous_finger]
-		} else {
-
-			//ask the bootstrap for the successor
-			//time.Sleep(time.Second * 1)
-			
-			status(node, "now finding finger entry for " + strconv.Itoa(i) + " by asking find_successor")
-			encoder, decoder := createConnection(node.Bootstrap)
-			m := Request{"find_successor", start}
-			encoder.Encode(m)
-			
-			res := new(Response)
-			decoder.Decode(&res)
-			finger_value := int(res.Result.(float64))
-
-			node.Finger[start] = finger_value
-		}
-		
-	}
-
-
-}
-
-func update_others(node *ChordNode)(){
-	
-	for i := 1; i <= node.M; i++ {
-		
-		//find a new node that may need its finger table updated to the newly joining node
-		//func mod is defined as a helper method because golang's % is broken for negative numbers
-		incoming_finger := mod((node.Identifier - powerof(2, i-1)),powerof(2,node.M))
-		
-	
-		status(node, "about to look for the predecessor")
-
-		encoder, decoder := createConnection(node.Identifier)
-		m := Request{"find_predecessor", incoming_finger}
-		encoder.Encode(m)
-		
-		res := new(Response)
-		decoder.Decode(&res)
-		p := int(res.Result.(float64))
-
-		//p should be 0...
-		status(node, "update_others_find_predecessor result ")
-		fmt.Println(res.Result, i)
-		
-		
-		//Now adjust the fingers on node p
-		//sending array of [n,i] for p to update its table
-
-		arr := []interface{}{node.Identifier, i}
-		
-		encoder, decoder = createConnection(p)
-		m = Request{"update_finger_table", arr}
-		encoder.Encode(m)
-		
-		res = new(Response)
-		decoder.Decode(&res)
-		
-	}
-}
-*/
 //////
 // Dict functions
 //////
@@ -685,77 +503,81 @@ func handleConnection(node *ChordNode, conn net.Conn){
 	req := new(Request)
 	decoder.Decode(&req)
 
-	//status(node, req.Method)
-
-	fmt.Println("deciding method: " + req.Method)
-	switch req.Method {
-		case "find_successor" :
-			handle_remote_get_successor(node, req, encoder)
-//		case "find_predecessor" :
-//			find_predecessor(node, req, encoder)
-//		case "get_successor" :
-//			get_successor(node, req, encoder)
-//		case "get_predecessor" :
-//			get_predecessor(node, req, encoder)
-//		case "set_successor" :
-//			set_successor(node, req, encoder)
-//		case "set_predecessor" :
-//			set_predecessor(node, req, encoder)
-//		case "update_finger_table" :
-//			update_finger_table(node, req, encoder)
-		case "lookup" :
-			lookup(node, req, encoder)
-		case "insert" :
-			insert(node, req, encoder, false)
+	case "find_successor" :
+		find_successor(req, encoder)
+	//case "find_predecessor" :
+	//	find_predecessor(req, encoder)
+	case "get_successor" :
+		get_successor(req, encoder)
+	case "get_predecessor" :
+		get_predecessor(req, encoder)
+	case "set_successor" :
+		set_successor(req, encoder)
+	case "set_predecessor" :
+		set_predecessor(req, encoder)
+/*ase "update_finger_table" :
+		update_finger_table(node, req, encoder)
+	case "lookup" :
+		lookup(node, req, encoder, triplets)*/
 	}
 }
 
-func readConfig()(config *Configuration){
-
-	dat, err := ioutil.ReadFile(os.Args[1])
-	if err != nil {
-		//fmt.Println("Error reading file")
-		panic(err)
-	}
-
-	b_arr := []byte(string(dat))
-
-	config = new(Configuration)
-	if err := json.Unmarshal(b_arr, &config); err != nil {
-		panic(err)
-	}
-
-	//fmt.Printf("Parsed : %+v", config)
-
-	return config
-}
 
 func main() {
 	// Parse argument configuration block
-	config := *readConfig()
-	fmt.Println("creating node...")
-	node := create(config)
-	fmt.Printf("node identifier: %b\n", node.Me.Identifier)
+	//node := new(ChordNode)
+	config := readTestConfig()
 
-	if(len(os.Args) > 2) {
-		ringNodeIpAddress := os.Args[2]
-		ringNodePort := os.Args[3]
-		address := ringNodeIpAddress + ":" + ringNodePort
-		ringNode := NodeInfo{generateNodeHash(address, node.M), ringNodeIpAddress, ringNodePort}
-		node.join(ringNode)
+	// For early development, the chord node listens on port 1000x, where x is its identifier
+	// The identifier is passed as the first command line argument
+	// The bootstrap (another node to use for join()) is the second optional argument
+	portString := "1000"
+	portString += os.Args[1]
+	config.Port, _ = strconv.Atoi(portString) 
+	config.ServerID = config.IpAddress
+	config.ServerID += ":"
+	config.ServerID += portString
+
+	//Initialize node fields
+	node.Identifier = config.ServerID
+	node.IP = config.IpAddress
+	node.Port = config.Port
+	node.M = 3
+	node.HashID = generateNodeHash(node.Identifier, node.M) 
+	node.Successor = ""
+	node.Predecessor = ""
+	fmt.Println("Initialized!")
+
+	if len(os.Args) > 2 {
+		ipportString := "127.0.0.1:1000"
+		ipportString += os.Args[2]
+		join(ipportString)
+	} else {
+		fmt.Println("Creating a new chord ring...")
+		node.create()
 	}
 
-	networkaddress := config.IpAddress + ":" + config.Port
-	ln, err := net.Listen("tcp", networkaddress)
+	fmt.Println("node identifier: "+node.Identifier)
+	fmt.Println("node successor: "+node.Successor)
+	fmt.Println("node hashID: ", node.HashID)
+
+	fmt.Println("Setting up a listener...")
+	
+	l, err := net.Listen(config.Protocol, node.Identifier)
 	if err != nil {
-		panic(err)
+		log.Fatal("Listen error:", err)
 	}
-	for {
-		fmt.Println("listening...")
-		conn, err := ln.Accept() // this blocks until connection or error
+
+	fmt.Println("Listening on ", node.Identifier)	
+	
+    //Listen for a connection
+    for {
+    	conn, err := l.Accept() // this blocks until connection or error
 		if err != nil {
-			panic(err)	
+			fmt.Println("Error accepting connection: ", err.Error())
 		}
-		go handleConnection(node, conn) 
-	}
+		go handleConnection(node, conn)
+    }
+    
+  //  node.stabilize()
 }
