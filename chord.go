@@ -89,12 +89,6 @@ func generateKeyRelHash(key string, rel string, m uint64) uint64 {
 		
 	upper := uint64( ((1 << m) - 1) ^ ((1 << (m/2)) - 1) )
 	lower := uint64( ((1 << m) - 1) ^ ( ((1 << (m/2 + shiftOffset)) - 1) << (m/2)) )
-	fmt.Printf("key  :%0b\n", keyHash)
-	fmt.Printf("rel  :%0b\n", relHash)
-	fmt.Printf("upper:%0b\n", upper)
-	fmt.Printf("lower:%0b\n", lower)
-	fmt.Printf("keyup:%0b\n", keyHash&upper)
-	fmt.Printf("rello:%0b\n", relHash&lower)
 	hash := (keyHash & upper) | (relHash & lower)
 	return hash
 }
@@ -115,7 +109,7 @@ func makeDictValue(content interface{}, permission string) DictValue {
 //CHORD FUNCTIONS
 //create a new chord ring
 func create(configuration Configuration) *ChordNode{
-	myIdentifier := generateNodeHash(configuration.IpAddress + ":" + configuration.Port, (1 << configuration.M))
+	myIdentifier := generateNodeHash(configuration.IpAddress + ":" + configuration.Port, configuration.M)
 	
 	myDBDir := configuration.PersistentStorageContainer.File
 	// (Create if not exist) open a database
@@ -151,15 +145,16 @@ func create(configuration Configuration) *ChordNode{
 }
 
 //join an existing chord ring containing node with identifier
-func (c ChordNode) join(ringNode NodeInfo) {
+func (c *ChordNode) join(ringNode NodeInfo) {
 	c.Predecessor = NodeInfo{}
-	c.Successor = c.get_successor(c.Me.Identifier)
+	c.Successor = ringNode
+	//c.Successor = c.get_successor(c.Me.Identifier)
 	fmt.Println(c.Successor)
 	//TODO: ask successor for all DICT3 data we should take from him
 }
 
 //find the immediate successor of node with given identifier
-func (c ChordNode) get_successor(identifier uint64) NodeInfo {
+func (c *ChordNode) get_successor(identifier uint64) NodeInfo {
 //the node being asked is the successor
 //is this smart to do? not setting predecessor on create; requires stabilize to run to work
 	if (identifier > c.Predecessor.Identifier) && (identifier <= c.Me.Identifier) {
@@ -173,7 +168,8 @@ func (c ChordNode) get_successor(identifier uint64) NodeInfo {
 	}
 }
 
-func (c ChordNode) remote_get_successor(remoteNode NodeInfo, identifier uint64) NodeInfo {
+func (c *ChordNode) remote_get_successor(remoteNode NodeInfo, identifier uint64) NodeInfo {
+	fmt.Println(remoteNode)
 	e, d := createConnection(remoteNode)
 	req := Request{Method: "get_successor", Params: identifier}
 	e.Encode(req)
