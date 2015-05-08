@@ -6,7 +6,7 @@ package main
 import (
 	"fmt"
 	"net"
-	"net/rpc"
+	"log"
 	"os"
 	"reflect"
 	"time"
@@ -23,8 +23,9 @@ type NodeInfo struct{	// contains hash and connection info
 }
 
 type ChordNode struct{
-	Me, Successor, Predecessor NodeInfo
-	FingerTable []NodeInfo
+	Me, Successor, Predecessor string
+	FingerTable []string
+	HashID uint64
 	M uint64 
 	Dict3 *db.Col
 	//Keys []uint64
@@ -77,9 +78,9 @@ func SendRPC(identifier string, serviceMethod string, args interface{}, reply in
 */
 
 //create connection to other nodes
-func createConnection(identifier string) (encoder *json.Encoder, decoder *json.Decoder){
-	fmt.Println("Creating connection to ", identifier)
-	conn, err := net.Dial("tcp", identifier)
+func createConnection(netAddr string) (encoder *json.Encoder, decoder *json.Decoder){
+	fmt.Println("Creating connection to ", netAddr)
+	conn, err := net.Dial("tcp", netAddr)
 	if err != nil {
 		fmt.Println("Connection error", err)
 	}
@@ -90,9 +91,9 @@ func createConnection(identifier string) (encoder *json.Encoder, decoder *json.D
 }
 //generates sha1 hash of "ip:port" string; sha1 too large for int; using big.Int
 //returning hash mod 2^m as the hash ID for the node
-func generateNodeHash(identifier string, m uint64) uint64 {
+func generateNodeHash(netAddr string, m uint64) uint64 {
 	hasher := crc64.New(crc64.MakeTable(123456789)) //any number will do
-	hasher.Write([]byte(identifier))
+	hasher.Write([]byte(netAddr))
 	hash64 := hasher.Sum64()
 	hash := hash64 % uint64(1 << m)
 	return hash 
@@ -127,16 +128,17 @@ func makeDictValue(content interface{}, permission string) DictValue {
 
 //CHORD FUNCTIONS
 //create a new chord ring
-func create(configuration Configuration) *ChordNode{
-	myIdentifier := generateNodeHash(configuration.IpAddress + ":" + configuration.Port, configuration.M)
+func create(config Configuration) *ChordNode{
+	netAddr := config.IpAddress + ":" + config.Port
+	hash := generateNodeHash(netAddr, config.M)
 	
-	myDBDir := configuration.PersistentStorageContainer.File
+	myDBDir := config.PersistentStorageContainer.File
 	// (Create if not exist) open a database
 	myDB, err := db.OpenDB(myDBDir)
 	if err != nil {
 		panic(err)
 	}
-	dbName := "Triplets"+configuration.Port
+	dbName := "Triplets"+config.Port
 	if err := myDB.Create(dbName); err != nil {
 		panic(err)
 	}	
@@ -150,14 +152,12 @@ func create(configuration Configuration) *ChordNode{
 		panic(err)
 	}
 	c := ChordNode{
-		Me: NodeInfo{Identifier: myIdentifier,
-			IpAddress: configuration.IpAddress,
-			Port: configuration.Port,
-		},
-		Successor: NodeInfo{},
-		Predecessor: NodeInfo{},
-		FingerTable: make([]NodeInfo, 0),
-		M: configuration.M,
+		Me: netAddr,
+		Successor: "",
+		Predecessor: "",
+		FingerTable: make([]string, 0),
+		HashID: hash,
+		M: config.M,
 		Dict3: triplets,
 	}
 	return &c
@@ -194,20 +194,20 @@ func powerof(x uint64, y uint64)(val uint64){
 
 //CHORD FUNCTIONS
 //create a new chord ring. set predecessor to nil and successor to self
-func get_successor(req *Request, encoder *json.Encoder){
+func (node *ChordNode)get_successor(req *Request, encoder *json.Encoder){
 	m := Response{node.Successor, nil}
 	encoder.Encode(m)
 	return
 
 }
 
-func get_predecessor(req *Request, encoder *json.Encoder){
+func (node *ChordNode)get_predecessor(req *Request, encoder *json.Encoder){
 	m := Response{node.Predecessor, nil}
 	encoder.Encode(m)
 	return
 }
 
-func set_predecessor(req *Request, encoder *json.Encoder){
+func (node *ChordNode)set_predecessor(req *Request, encoder *json.Encoder){
 	id := req.Params.(string)
 	node.Predecessor = id
 	m := Response{nil, nil}
@@ -215,7 +215,7 @@ func set_predecessor(req *Request, encoder *json.Encoder){
 	return
 }
 
-func set_successor(req *Request, encoder *json.Encoder){
+func (node *ChordNode)set_successor(req *Request, encoder *json.Encoder){
 	id := req.Params.(string)
 	node.Successor = id
 	
@@ -226,20 +226,30 @@ func set_successor(req *Request, encoder *json.Encoder){
 	return
 }
 
-func (c ChordNode) create() error {
+func (node *ChordNode)successor_of_hash(hash uint64) string {
+	if (hash == generateNodeHash(node.Me, node.M)) {
+		return node.Me
+	} else if (generateNodeHash(node.Me, node.M) < hash && hash <= generateNodeHash(node.Successor, node.M)) {
+		return node.Successor
+	} else {
+		return node.Successor //will be finger table in future
+	}
+}
+
+func (node *ChordNode) create() error {
 	node.Predecessor = ""
-	node.Successor = node.Identifier
+	node.Successor = node.Me
 	return nil
 }
 
 //join an existing chord ring containing node with identifier
-func join(identifier string) {
+func (node *ChordNode)join(netAddr string) {
 	fmt.Println("entered join")
 	node.Predecessor = ""
 	//reply := ""
 
-	encoder, decoder := createConnection(identifier)
-	m := Request{"find_successor", node.Identifier}
+	encoder, decoder := createConnection(netAddr)
+	m := Request{"find_successor", node.Me}
 	encoder.Encode(m)
 	res := new(Response)
 	decoder.Decode(&res)
@@ -248,27 +258,27 @@ func join(identifier string) {
 }
 
 //find the immediate successor of node with given identifier
-func find_successor(req *Request, encoder *json.Encoder) {
-	identifier := req.Params.(string)
-	fmt.Println("in find_successor: identifier is ", identifier)
+func (node *ChordNode)find_successor(req *Request, encoder *json.Encoder) {
+	netAddr := req.Params.(string)
+	fmt.Println("in find_successor: identifier is ", netAddr)
 	//res := new(Response)
-	fmt.Println("hash is ", generateNodeHash(identifier,node.M))
+	fmt.Println("hash is ", generateNodeHash(netAddr, node.M))
 	//probably shouldn't use node.predecessor; not set on create - requires stabilize to have been run to work
 /*	if (inChordRange(generateNodeHash(identifier, node.M), generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Identifier, node.M), node.M)) {
 		res := Response{node.Identifier, nil}
 		encoder.Encode(res)
 	} else */
 
-	if(node.Identifier == node.Successor) {
-		res := Response{node.Identifier, nil}
+	if(node.Me == node.Successor) {
+		res := Response{node.Me, nil}
 		encoder.Encode(res)
-	} else if (inChordRange(generateNodeHash(identifier, node.M), generateNodeHash(node.Identifier, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
+	} else if (inChordRange(generateNodeHash(netAddr, node.M), generateNodeHash(node.Me, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
 		res := Response{node.Successor, nil}
 		encoder.Encode(res)
 	} else {
 		//find closest finger and forward request there; for now just forward around ring
 		encoder2, decoder2 := createConnection(node.Successor)
-		m := Request{"find_successor", identifier}
+		m := Request{"find_successor", netAddr}
 		encoder2.Encode(m)
 		res := new(Response)
 		decoder2.Decode(&res)
@@ -287,14 +297,14 @@ func (c ChordNode) stabilize() error {
 }
 
 //node thinks it should be the predecessor
-func (c ChordNode) notify(identifier string) error {
-	if (node.Predecessor == "" || (node.HashID < generateNodeHash(identifier, node.M) && generateNodeHash(identifier, node.M) < generateNodeHash(node.Predecessor, node.M))) {
-		node.Predecessor = identifier
+func (node *ChordNode) notify(netAddr string) error {
+	if (node.Predecessor == "" || (node.HashID < generateNodeHash(netAddr, node.M) && generateNodeHash(netAddr, node.M) < generateNodeHash(node.Predecessor, node.M))) {
+		node.Predecessor = netAddr
 	}
 	return nil
 }
 
-func (c ChordNode) getPredecessor(nothing string, reply *string) error {
+func (node *ChordNode) getPredecessor(nothing string, reply *string) error {
 	*reply = node.Predecessor
 	return nil
 }
@@ -304,15 +314,6 @@ func (c ChordNode) getPredecessor(nothing string, reply *string) error {
 /////
 // Helper Functions
 /////
-
-func powerof(x int, y int)(val int){
-	val = int(math.Pow(float64(x),float64(y)))
-	return val
-}
-
-func status(node *ChordNode, msg string){
-	fmt.Println("Ident: ", node.Me.Identifier, " P: ", node.Predecessor, " S: ", node.Successor, " " ,  msg)
-} 
 
 //Because golang's % of negative numbers is broken
 //https://github.com/golang/go/issues/448
@@ -341,17 +342,6 @@ func readConfig()(config *Configuration){
 	//fmt.Printf("Parsed : %+v", config)
 
 	return config
-}
-
-func createConnection(node NodeInfo) (encoder *json.Encoder, decoder *json.Decoder){
-	conn, err := net.Dial("tcp", node.IpAddress + ":" + node.Port)
-	if err != nil {
-		fmt.Println("Connection error", err)
-	}
-	e := json.NewEncoder(conn)
-	d := json.NewDecoder(conn)
-	
-	return e, d
 }
 
 //////
@@ -384,7 +374,7 @@ func query_key_rel(key string, rel string, triplets *db.Col) (queryResult map[in
 	return q_result
 }
 
-func lookup(n *ChordNode, req *Request, encoder *json.Encoder) {
+func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
 	triplets := n.Dict3
 
 	p := req.Params
@@ -416,7 +406,7 @@ func lookup(n *ChordNode, req *Request, encoder *json.Encoder) {
 		//get hash for key/rel
 		keyRelHash := generateKeyRelHash(key, rel, n.M)
 		//find closest successor/finger node for keyRelHash
-		successor := n.get_successor(keyRelHash)
+		successor := n.successor_of_hash(keyRelHash)
 		//forward request to successor
 		forwardEncoder, decoder := createConnection(successor)
 		forwardEncoder.Encode(req)
@@ -426,7 +416,7 @@ func lookup(n *ChordNode, req *Request, encoder *json.Encoder) {
 	}
 }
 
-func insert(n *ChordNode, req *Request, encoder *json.Encoder, update bool){
+func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 	fmt.Println("entering insert")
 	triplets := n.Dict3
 
@@ -440,9 +430,9 @@ func insert(n *ChordNode, req *Request, encoder *json.Encoder, update bool){
 	keyRelHash := generateKeyRelHash(key, rel, n.M)
 	fmt.Printf("keyRelHash: %b\n", keyRelHash)
 	// get successor; if Me, then insert into DB, else forward
-	successor := n.get_successor(keyRelHash)
+	successor := n.successor_of_hash(keyRelHash)
 	fmt.Println(successor)
-	if (successor.Identifier != n.Me.Identifier) {
+	if (successor != n.Me) {
 		forwardEncoder, decoder := createConnection(successor)
 		forwardEncoder.Encode(req)
 		resp := new(Response)
@@ -503,72 +493,54 @@ func handleConnection(node *ChordNode, conn net.Conn){
 	req := new(Request)
 	decoder.Decode(&req)
 
+	switch(req.Method) {
 	case "find_successor" :
-		find_successor(req, encoder)
+		node.find_successor(req, encoder)
 	//case "find_predecessor" :
 	//	find_predecessor(req, encoder)
 	case "get_successor" :
-		get_successor(req, encoder)
+		node.get_successor(req, encoder)
 	case "get_predecessor" :
-		get_predecessor(req, encoder)
+		node.get_predecessor(req, encoder)
 	case "set_successor" :
-		set_successor(req, encoder)
+		node.set_successor(req, encoder)
 	case "set_predecessor" :
-		set_predecessor(req, encoder)
-/*ase "update_finger_table" :
-		update_finger_table(node, req, encoder)
+		node.set_predecessor(req, encoder)
+	//case "update_finger_table" :
+		//node.update_finger_table(node, req, encoder)
 	case "lookup" :
-		lookup(node, req, encoder, triplets)*/
+		node.lookup(req, encoder)
+	case "insert" :
+		node.insert(req, encoder, true)
 	}
 }
 
 
 func main() {
 	// Parse argument configuration block
-	//node := new(ChordNode)
-	config := readTestConfig()
-
-	// For early development, the chord node listens on port 1000x, where x is its identifier
-	// The identifier is passed as the first command line argument
-	// The bootstrap (another node to use for join()) is the second optional argument
-	portString := "1000"
-	portString += os.Args[1]
-	config.Port, _ = strconv.Atoi(portString) 
-	config.ServerID = config.IpAddress
-	config.ServerID += ":"
-	config.ServerID += portString
-
-	//Initialize node fields
-	node.Identifier = config.ServerID
-	node.IP = config.IpAddress
-	node.Port = config.Port
-	node.M = 3
-	node.HashID = generateNodeHash(node.Identifier, node.M) 
-	node.Successor = ""
-	node.Predecessor = ""
-	fmt.Println("Initialized!")
+	config := *readConfig()
+	node := create(config)
 
 	if len(os.Args) > 2 {
-		ipportString := "127.0.0.1:1000"
-		ipportString += os.Args[2]
-		join(ipportString)
+		ringNodeAddr := os.Args[2]
+		node.join(ringNodeAddr)
 	} else {
 		fmt.Println("Creating a new chord ring...")
 		node.create()
 	}
 
-	fmt.Println("node identifier: "+node.Identifier)
+	fmt.Println("node: "+node.Me)
 	fmt.Println("node successor: "+node.Successor)
 	fmt.Println("node hashID: ", node.HashID)
 
 	fmt.Println("Setting up a listener...")
 	
-	l, err := net.Listen(config.Protocol, node.Identifier)
+	l, err := net.Listen(config.Protocol, node.Me)
 	if err != nil {
 		log.Fatal("Listen error:", err)
 	}
 
-	fmt.Println("Listening on ", node.Identifier)	
+	fmt.Println("Listening on ", node.Me)	
 	
     //Listen for a connection
     for {
