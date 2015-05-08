@@ -460,6 +460,11 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 					}
 				
 					dictVal := readBack["val"].(map[string]interface{})
+					if dictVal["Permission"] == "R" {
+						//No return value for insertOrUpdate() so returning silently
+						return
+					}
+
 					//update content
 					dictVal["Content"] = val
 					//update with new Accessed/Modified time
