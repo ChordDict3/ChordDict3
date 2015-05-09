@@ -27,7 +27,7 @@ type ChordNode struct{
 	Predecessor string
 	FingerTable []string
 	M uint64 
-	//Keys []uint64
+	Keys []uint64
 }
 
 var node = new(ChordNode) //made global so accessible by chord functions
@@ -200,6 +200,26 @@ func set_successor(node *ChordNode, req *Request, encoder *json.Encoder){
 	m := Response{nil, nil}
 	encoder.Encode(m)
 	return
+}
+
+func transfer_keys_on_shutdown(node *ChordNode, req *Request, encoder *json.Encoder) {
+    forwarded_keys := req.Params.([]uint64)
+    
+    for _, value := range forwarded_keys {
+        node.Keys = append(node.Keys, value)
+    }
+    
+    status(node, "Keys forwarded from predecessor")
+    
+    m := Response(nil, nil)
+    encoder.Encode(m)
+    return
+}
+
+func transfer_keys_on_join(node *ChordNode, req *Request, encoder *json.Encoder) {
+    // grab successor keys
+    // loop through successor keys and check if key# <= node#
+    // add those keys to node's Key list
 }
 
 func update_finger_table(node *ChordNode, req *Request, encoder *json.Encoder){
@@ -582,7 +602,19 @@ func lookup(node *ChordNode, req *Request, encoder *json.Encoder, triplets *db.C
 	}
 }
 
-
+func shutdown(node *ChordNode, ) {
+    // Get the node's predecessor
+    // Set the node's predecessor to nothing
+    // Get the node's successor
+    // Set the node's successor to nothing
+    // copy all keys from node to successor
+    
+    node.HashID = -1
+    predNode := node.getPredecessor
+    node.Predecessor = ""
+    succNode := node.Successor
+    node.Successor = ""
+}
 
 //////
 // Handle incoming requests for RPCs
