@@ -16,7 +16,6 @@ import (
 	"encoding/json"
 	"github.com/HouzuoGuo/tiedot/db"
 )
-Identifier
 
 type ChordNode struct{
 	Me, Successor, Predecessor string
