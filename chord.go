@@ -25,7 +25,7 @@ type ChordNode struct{
 	HashID uint64
 	Successor string
 	Predecessor string
-	Fingers [3]string
+	Fingers []string
 	M uint64 
 	//Keys []uint64
 }
@@ -521,6 +521,7 @@ func main() {
 	node.HashID = generateNodeHash(node.Identifier, node.M) 
 	node.Successor = ""
 	node.Predecessor = ""
+	node.Fingers = make([]string, node.M)
 	fmt.Println("Initialized!")
 
 	if len(os.Args) > 2 {
