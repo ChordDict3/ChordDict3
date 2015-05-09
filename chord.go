@@ -211,8 +211,10 @@ func find_successor(req *Request, encoder *json.Encoder) {
 		encoder.Encode(res)
 	} else {
 		//find closest finger and forward request there; for now just forward around ring
-		encoder2, decoder2 := createConnection(node.Successor)
-		m := Request{"successor_of_hash", identifier}
+		encoder2, decoder2 := createConnection(node.Successor) //change to closest finger
+		//closest_finger := find_closest_finger(generateNodeHash(identifier, node.M), node.M)
+		//encoder2, decoder2 := createConnection(closest_finger)
+		m := Request{"find_successor", identifier}
 		encoder2.Encode(m)
 		res := new(Response)
 		decoder2.Decode(&res)
@@ -293,7 +295,9 @@ func successor_of_hash(req *Request, encoder *json.Encoder) {
 		res := Response{retval, nil}
 		encoder.Encode(res)
 	} else {
-		encoder2, decoder2 := createConnection(node.Successor)
+		encoder2, decoder2 := createConnection(node.Successor) //should change this to closest finger
+		//closest_finger := find_closest_finger(hash, node.M)
+		//encoder2, decoder2 := createConnection(closest_finger)
 		m := Request{"successor_of_hash", hash}
 		encoder2.Encode(m)
 		res := new(Response)
@@ -311,30 +315,36 @@ func fix_fingers() {
 	fmt.Println("fix fingers")
 	index := 0
 	for i := uint64(0); i < node.M; i++ {
-		fmt.Println("iteration: ", i+1)
 		start := uint64((node.HashID + powerof(2,i)) % powerof(2,node.M))
-		fmt.Println("finger should be: ", start)
 		if(inChordRange(start, generateNodeHash(node.Identifier, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
-			fmt.Println("in chord range")
 			finger_value = node.Successor
 		} else if(inChordRange(start, generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Identifier, node.M), node.M)) {
-			fmt.Println("i'm my finger")
 			finger_value = node.Identifier
 		} else if (node.Identifier != node.Successor) {
 			encoder, decoder := createConnection(node.Successor)
-			fmt.Println("making request... with ", start)
 			m := Request{"successor_of_hash", start}
 			encoder.Encode(m)
 			res := new(Response)
 			decoder.Decode(&res)
 			finger_value = res.Result.(string)
 		} else {
-			fmt.Println("we're our finger")
 			finger_value = node.Identifier
 		}
 		node.Fingers[index] = finger_value
 		index++
 	}
+}
+
+func find_closest_finger(hash uint64, m uint64) string {
+	for i := uint64(0); i < node.M; i++ {
+		if(node.Fingers[i] != "") {
+			if(inChordRange(hash, generateNodeHash(node.Identifier, node.M), generateNodeHash(node.Fingers[i], node.M), node.M)) {
+				return node.Fingers[i]
+			}
+		}
+	}
+	//no finger was closest; return self
+	return node.Identifier
 }
 
 //not relevant; won't have node failures. can be set on node shutdown
