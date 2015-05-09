@@ -57,6 +57,9 @@ type DictValue struct {
 	Permission string
 }
 
+//////////////////
+//HELPER FUNCTIONS
+//////////////////
 //create connection to other nodes
 func createConnection(netAddr string) (encoder *json.Encoder, decoder *json.Decoder){
 	fmt.Println("Creating connection to ", netAddr)
@@ -108,8 +111,6 @@ func makeDictValue(content interface{}, permission string) DictValue {
 	return dictVal
 }
 
-//CHORD FUNCTIONS
-//create a new chord ring
 func create(config Configuration) *ChordNode{
 	netAddr := config.IpAddress + ":" + config.Port
 	hash := generateNodeHash(netAddr, config.M)
@@ -223,10 +224,21 @@ func (node *ChordNode)set_successor(req *Request, encoder *json.Encoder){
 
 func (node *ChordNode)transfer_keys_on_shutdown(req *Request, encoder *json.Encoder) {    
     fmt.Println("entered transfer_keys_on_shutdown")
-    forwarded_keys := req.Params.([]uint64)
+    forwarded_triplets := req.Params.([]interface{})
     
-    for _, value := range forwarded_keys {
-        node.Keys = append(node.Keys, value)
+    triplets := node.Dict3
+    
+    for _, triplet := range forwarded_triplets {
+        keyRelHash := triplet["hash"]
+        _, err := triplets.Insert(map[string]interface{}{
+            "hash": keyRelHash,
+            "key": triplet["key"],
+            "rel": triplet["rel"],
+            "val": triplet["val"]})
+        if err != nil {
+            panic(err)
+        }
+        node.Keys = append(node.Keys, keyRelHash)
     }
     
     m := Response("Success", nil)
@@ -235,12 +247,18 @@ func (node *ChordNode)transfer_keys_on_shutdown(req *Request, encoder *json.Enco
 }
 
 func (node *ChordNode)transfer_keys_on_join(req *Request, encoder *json.Encoder) {
-    // grab successor keys
+    fmt.Println("entered transfer_keys_on_join")
+    forwarded_hashID := req.Params.(uint64)
+    
+    for _, value := range node.Keys {
+        if (value <= forwarded_hashID) {
+            
+        }
+    }
     // loop through successor keys and check if key# <= node#
     // add those keys to node's Key list
 }
 
-/*
 func (node *ChordNode)successor_of_hash(hash uint64) string {
 	if (inChordRange(hash, generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Me, node.M), node.M)) {
 		return node.Me
@@ -250,7 +268,6 @@ func (node *ChordNode)successor_of_hash(hash uint64) string {
 		return node.Successor
 	}
 }
-*/
 
 func (node *ChordNode) create() error {
 	node.Predecessor = ""
@@ -271,7 +288,8 @@ func (node *ChordNode)join(netAddr string) {
 	node.Successor = res.Result.(string)
     
 	//TODO: ask successor for all DICT3 data we should take from him
-    m = Request{"transfer_keys_on_join", netAddr}
+    successor_encoder, successor_decoder := createConnection(node.Successor)
+    m = Request{"transfer_keys_on_join", node.HashID}
     encoder.Encode(m)
     res := new(Response)
     decoder.Decode(&res)
@@ -363,7 +381,7 @@ func (node *ChordNode)notify(req *Request, encoder *json.Encoder) {
 	}
 }
 
-func successor_of_hash(req *Request, encoder *json.Encoder) {
+func (node *ChordNode)successor_of_hash(req *Request, encoder *json.Encoder) {
 	fmt.Println("in succ of hash")
 	hash := uint64(req.Params.(float64))
 	retval := ""
@@ -530,8 +548,9 @@ func readConfig()(config *Configuration){
 //////
 // Dict functions
 //////
-func insertValueIntoTriplets(key string, rel string, val map[string]interface{}, triplets *db.Col) {
+func insertValueIntoTriplets(keyRelHash uint64, key string, rel string, val map[string]interface{}, triplets *db.Col) {
 	_, err := triplets.Insert(map[string]interface{}{
+        "hash": keyRelHash,
 		"key": key,
 		"rel": rel,
 		"val": val})
@@ -555,6 +574,30 @@ func query_key_rel(key string, rel string, triplets *db.Col) (queryResult map[in
 	}
 
 	return q_result
+}
+
+func query_hash(hash uint64, triplets *db.Col) (queryResult map[int]struct{}) {
+
+    var query interface{}
+
+	json.Unmarshal([]byte(`{"eq": "` + hash + `", "in": ["hash"]}`), &query)
+
+	q_result := make(map[int]struct{}) // query result (document IDs) goes into map keys
+
+	if err := db.EvalQuery(query, triplets, &q_result); err != nil {
+		panic(err)
+	}
+
+	return q_result
+}
+
+func (node *ChordNode) find_key(key uint64) int {
+    for index, value := range node.Keys {
+        if (value == key) {
+            return index
+        }
+    }
+    return -1
 }
 
 func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
@@ -622,6 +665,12 @@ func (n *ChordNode)delete(req *Request, encoder *json.Encoder){
 			if err := triplets.Delete(i); err != nil {
 				panic(err)
 			}
+            
+            // Delete hash from node's Keys
+            keyRelHashIndex = n.find_key(readBack["hash"])
+            if (keyRelHashIndex > -1) {
+                n.Keys = append(n.Keys[:keyRelHashIndex], n.Keys[keyRelHashIndex+1:]...)
+            }
 		}
 		
 	}
@@ -674,7 +723,7 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 					now := time.Now()
 					dictVal["Accessed"] = now
 					dictVal["Modified"] = now
-					insertValueIntoTriplets(key, rel, dictVal, triplets)
+					insertValueIntoTriplets(keyRelHash, key, rel, dictVal, triplets)
 				}
 			} else {
 				// insert() fails if key/rel already exists
@@ -684,9 +733,11 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 		} else {
 			dictVal := makeDictValue(val, "RW")
 			_, err := triplets.Insert(map[string]interface{}{
+                "hash": keyRelHash,
 				"key": key,
 				"rel": rel,
 				"val": dictVal})
+            n.Keys = append(n.Keys, keyRelHash)
 			if err != nil {
 				panic(err)
 			}
@@ -721,15 +772,32 @@ func (n *ChordNode)shutdown(req *Request, encoder *json.Encoder) {
     if (successor == predecessor && successor == n.Me) {
         // TODO: dump the DB
     } else {
-        // Copy all keys from node to successor
+        // Copy all keys and Dict3 triplets from node to successor        
+        successor_triplets := make([]interface{}, 0)
+        triplets := n.Dict3
+        for _, value := range n.Keys {
+            queryResult := query_hash(value, successor_triplets)
+            if len(queryResult) != 0 {
+                for i := range queryResult {
+                    readBack, err := successor_triplets.Read(i)
+                    if err != nil {
+                        panic(err)
+                    }
+                    if err := triplets.Delete(i); err != nil {
+                        panic(err)
+                    }
+                    successor_triplets = append(successor_triplets, readBack)
+                }
+            }
+        }
         successor_encoder, successor_decoder := createConnection(successor)
-        m := Request{"transfer_keys_on_shutdown", n.Keys}
+        m := Request{"transfer_keys_on_shutdown", successor_triplets}
         successor_encoder.Encode(m)
         res := new(Response)
         decoder.Decode(&res)
     }
     
-	n.Keys = {}
+	n.Keys = make([]uint64, 0)
     os.Exit(0)
     client_message := Response{nil, nil}
     encoder.Encode(client_message)
