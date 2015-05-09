@@ -178,21 +178,20 @@ func set_successor(req *Request, encoder *json.Encoder){
 	return
 }
 
-func transfer_keys_on_shutdown(node *ChordNode, req *Request, encoder *json.Encoder) {
+func transfer_keys_on_shutdown(req *Request, encoder *json.Encoder) {    
+    fmt.Println("entered transfer_keys_on_shutdown")
     forwarded_keys := req.Params.([]uint64)
     
     for _, value := range forwarded_keys {
         node.Keys = append(node.Keys, value)
     }
     
-    status(node, "Keys forwarded from predecessor")
-    
-    m := Response(nil, nil)
+    m := Response("Success", nil)
     encoder.Encode(m)
     return
 }
 
-func transfer_keys_on_join(node *ChordNode, req *Request, encoder *json.Encoder) {
+func transfer_keys_on_join(req *Request, encoder *json.Encoder) {
     // grab successor keys
     // loop through successor keys and check if key# <= node#
     // add those keys to node's Key list
@@ -217,6 +216,15 @@ func join(identifier string) {
 	node.Successor = res.Result.(string)
 
 	//TODO: ask successor for all DICT3 data we should take from him
+    m = Request{"transfer_keys_on_join", identifier}
+    encoder.Encode(m)
+    res := new(Response)
+    decoder.Decode(&res)
+    
+    returned_keys := res.Result.([]uint64)
+    for _, value := range returned_keys {
+        node.Keys = append(node.Keys, value)
+    }
 }
 
 //find the immediate successor of node with given identifier
@@ -480,18 +488,38 @@ func lookup(node *ChordNode, req *Request, encoder *json.Encoder, triplets *db.C
 	}
 }
 
-func shutdown(node *ChordNode, ) {
-    // Get the node's predecessor
-    // Set the node's predecessor to nothing
-    // Get the node's successor
-    // Set the node's successor to nothing
-    // copy all keys from node to successor
-    
+func shutdown(node *ChordNode, encoder *json.Encoder) {
+    // Get the node's hash ID
+    hashID uint64 = node.HashID
+    // Set the hash ID to something unreachable
     node.HashID = -1
-    predNode := node.getPredecessor
+    
+    // Get the node's predecessor
+    predecessor string := node.Predecessor
+    // Set the node's predecessor to nothing
     node.Predecessor = ""
-    succNode := node.Successor
+    
+    // Get the node's successor
+    successor string := node.Successor
+    // Set the node's successor to nothing
     node.Successor = ""
+    
+    // If this is the only node in the ring
+    if (successor == predecessor && successor == node.Identifier) {
+        // TODO: dump the DB
+    } else {
+        // Copy all keys from node to successor
+        successor_encoder, successor_decoder := createConnection(successor)
+        m := Request{"transfer_keys_on_shutdown", node.Keys}
+        successor_encoder.Encode(m)
+        res := new(Response)
+        decoder.Decode(&res)
+    }
+    
+	node.Keys = {}
+    os.Exit(0)
+    client_message := Response{nil, nil}
+    encoder.Encode(client_message)
 }
 
 //////
@@ -554,6 +582,7 @@ func main() {
 	node.Successor = ""
 	node.Predecessor = ""
 	node.Fingers = make([]string, node.M)
+    node.Keys = {}
 	fmt.Println("Initialized!")
 
 	if len(os.Args) > 2 {
