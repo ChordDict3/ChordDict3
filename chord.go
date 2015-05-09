@@ -211,9 +211,9 @@ func find_successor(req *Request, encoder *json.Encoder) {
 		encoder.Encode(res)
 	} else {
 		//find closest finger and forward request there; for now just forward around ring
-		encoder2, decoder2 := createConnection(node.Successor) //change to closest finger
-		//closest_finger := find_closest_finger(generateNodeHash(identifier, node.M), node.M)
-		//encoder2, decoder2 := createConnection(closest_finger)
+		//encoder2, decoder2 := createConnection(node.Successor) //change to closest finger
+		closest_preceding_node := closest_preceding_node(generateNodeHash(identifier, node.M), node.M)
+		encoder2, decoder2 := createConnection(closest_preceding_node)
 		m := Request{"find_successor", identifier}
 		encoder2.Encode(m)
 		res := new(Response)
@@ -295,9 +295,9 @@ func successor_of_hash(req *Request, encoder *json.Encoder) {
 		res := Response{retval, nil}
 		encoder.Encode(res)
 	} else {
-		encoder2, decoder2 := createConnection(node.Successor) //should change this to closest finger
-		//closest_finger := find_closest_finger(hash, node.M)
-		//encoder2, decoder2 := createConnection(closest_finger)
+		//encoder2, decoder2 := createConnection(node.Successor) //should change this to closest finger
+		closest_preceding_node := closest_preceding_node(hash, node.M)
+		encoder2, decoder2 := createConnection(closest_preceding_node)
 		m := Request{"successor_of_hash", hash}
 		encoder2.Encode(m)
 		res := new(Response)
@@ -335,11 +335,11 @@ func fix_fingers() {
 	}
 }
 
-func find_closest_finger(hash uint64, m uint64) string {
-	for i := uint64(0); i < node.M; i++ {
-		if(node.Fingers[i] != "") {
-			if(inChordRange(hash, generateNodeHash(node.Identifier, node.M), generateNodeHash(node.Fingers[i], node.M), node.M)) {
-				return node.Fingers[i]
+func closest_preceding_node(hash uint64, m uint64) string {
+	for i := uint64(1); i < node.M; i++ {
+		if(node.Fingers[i-1] != "" && node.Fingers[i] != "") {
+			if(inChordRange(hash, generateNodeHash(node.Fingers[i-1], node.M), generateNodeHash(node.Fingers[i], node.M), node.M)) {
+				return node.Fingers[i-1]
 			}
 		}
 	}
