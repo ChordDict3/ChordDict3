@@ -9,7 +9,6 @@ import (
 	"bufio"
 	"time"
 	"io/ioutil"
-	"strconv"
 )
 
 type Request struct{
@@ -29,13 +28,12 @@ type Configuration struct{
 	Protocol string `json:"protocol"`
 	IpAddress string `json:"ipAddress"`
 	Port string `json:"port"`
+	M uint64 `json:"M"`
 	//PersistentStorageContainer struct {
-	//	File string `json:"file"`
+		//File string `json:"file"`
 	//} `json:"persistentStorageContainer"`
 	Methods []string `json:"methods"`
-
 }
-
 
 func insert(key string, rel string, value interface{}){
 	d3 := []interface{}{key, rel, value}
@@ -133,7 +131,7 @@ func readInput(config *Configuration){
 	for scanner.Scan(){
 		text := scanner.Text()
 
-		networkaddress := config.IpAddress + ":" + strconv.Itoa(config.Port)
+		networkaddress := config.IpAddress + ":" + config.Port
 		conn, err := net.Dial(config.Protocol, networkaddress)
 		if err != nil {
 			log.Fatal("Connection error", err)
