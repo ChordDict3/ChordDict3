@@ -389,6 +389,16 @@ func insertValueIntoTriplets(key string, rel string, val map[string]interface{},
 	}
 }
 
+func updateTripletValue(docId int, key string, rel string, val map[string]interface{}, triplets *db.Col) {
+	err := triplets.Update(docId, map[string]interface{} {
+		"key": key,
+		"rel": rel,
+		"val": val})
+	if (err != nil) {
+		panic(err)
+	}
+}
+
 func (node *ChordNode)successor_of_hash(req *Request, encoder *json.Encoder) {
 	fmt.Println("in succ of hash")
 	hash := uint64(req.Params.(float64))
@@ -412,7 +422,6 @@ func (node *ChordNode)successor_of_hash(req *Request, encoder *json.Encoder) {
 		fmt.Println("successor of hash is: ", res.Result.(string))
 		encoder.Encode(res)
 	}
-
 }
 
 //runs periodically; refreshes finger table entries
@@ -474,8 +483,8 @@ func query_key(key string, triplets *db.Col)  []map[string]interface{}{
 			val := readBack["val"].(map[string]interface{})
 			rel := readBack["rel"].(string)
 			//update with new Accessed time
+			updateTripletValue(i, key, rel, val, triplets)
 			val["Accessed"] = time.Now()
-			insertValueIntoTriplets(key, rel, val, triplets)
 			
 			resultList = append(resultList, val)
 		}
@@ -483,7 +492,7 @@ func query_key(key string, triplets *db.Col)  []map[string]interface{}{
 	return resultList
 }
 
-func query_rel(rel string, triplets *db.Col) (queryResult map[int]struct{}){
+func query_rel(rel string, triplets *db.Col) []map[string]interface{}{
 
 	var query interface{}
 
@@ -495,7 +504,24 @@ func query_rel(rel string, triplets *db.Col) (queryResult map[int]struct{}){
 		panic(err)
 	}
 
-	return q_result
+	resultList := make([]map[string]interface{}, 0)
+	if len(q_result) != 0 {
+		for i := range q_result {
+			readBack, err := triplets.Read(i)
+			if err != nil {
+				panic(err)
+			}
+			
+			val := readBack["val"].(map[string]interface{})
+			key := readBack["key"].(string)
+			//update with new Accessed time
+			updateTripletValue(i, key, rel, val, triplets)
+			val["Accessed"] = time.Now()
+			
+			resultList = append(resultList, val)
+		}
+	}
+	return resultList
 }
 
 func query_key_rel(key string, rel string, triplets *db.Col) (queryResult map[int]struct{}){
@@ -542,7 +568,7 @@ func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
 				fmt.Println(val)
 				//update with new Accessed time
 				val["Accessed"] = time.Now()
-				insertValueIntoTriplets(key, rel, val, triplets)
+				updateTripletValue(i, key, rel, val, triplets)
 				//send response
 				m := Response{val, nil}
 				encoder.Encode(m)
@@ -580,6 +606,9 @@ func (n *ChordNode)lookup_keyonly(req *Request, encoder *json.Encoder) {
 	keyPartialHashes := generateKeyPartialHashes(key, n.M)
 	for (n.get_successor_of_hash(keyPartialHashes[0]) == n.Me) {
 		keyPartialHashes = keyPartialHashes[1:]
+		if (len(keyPartialHashes) == 0) {
+			break
+		}
 	}
 	if (len(keyPartialHashes) > 0) {		// only forward if hashes remain
 		successor := n.get_successor_of_hash(keyPartialHashes[0])
@@ -596,7 +625,6 @@ func (n *ChordNode)lookup_keyonly(req *Request, encoder *json.Encoder) {
 		forwardedResults := forwardedResponse.Result
 		fArr := forwardedResults.([]interface{})
 		for _, result := range fArr {
-			fmt.Println(result)
 			resultList = append(resultList, result.(map[string]interface{}))
 		}
 	}
@@ -626,7 +654,7 @@ func (n *ChordNode)lookup_keyonly_internal(req *Request, encoder *json.Encoder) 
 			break
 		}
 	}
-	/*
+
 	if (len(keyPartialHashes) > 0) {		// only forward if hashes remain
 		successor := n.get_successor_of_hash(keyPartialHashes[0])
 		forwardEncoder, decoder := createConnection(successor)
@@ -641,16 +669,98 @@ func (n *ChordNode)lookup_keyonly_internal(req *Request, encoder *json.Encoder) 
 		//add response to result list
 		forwardedResults := forwardedResponse.Result
 		fArr := forwardedResults.([]interface{})
-		responseResults := fArr[0].([]map[string]interface{})
-		resultList = append(resultList, responseResults...)
+		for _, result := range fArr {
+			resultList = append(resultList, result.(map[string]interface{}))
+		}
 	}
-	*/
+
 	resp := Response{resultList, nil}
 	encoder.Encode(resp)
 }
 
 func (n *ChordNode)lookup_relonly(req *Request, encoder *json.Encoder) {
+	triplets := n.Dict3
+	
+	p := req.Params
+	arr := p.([]interface{})
+	rel := arr[1].(string)
+	
+	//begin building result list of satisfied keys
+	resultList := query_rel(rel, triplets)
+	
+	relPartialHashes := generateRelPartialHashes(rel, n.M)
+	for (n.get_successor_of_hash(relPartialHashes[0]) == n.Me) {
+		relPartialHashes = relPartialHashes[1:]
+		if (len(relPartialHashes) == 0) {
+			break
+		}
+	}
+	if (len(relPartialHashes) > 0) {		// only forward if hashes remain
+		successor := n.get_successor_of_hash(relPartialHashes[0])
+		forwardEncoder, decoder := createConnection(successor)
+		forwardedParams := make([]interface{}, 2)
+		forwardedParams[0] = rel
+		forwardedParams[1] = relPartialHashes
+		req := Request{Method: "lookup_relonly_internal", Params: forwardedParams}
+		forwardEncoder.Encode(req)
+		forwardedResponse := new(Response)
+		decoder.Decode(&forwardedResponse)
+		
+		//add response to result list
+		forwardedResults := forwardedResponse.Result
+		fArr := forwardedResults.([]interface{})
+		for _, result := range fArr {
+			resultList = append(resultList, result.(map[string]interface{}))
+		}
+	}
+	
+	resp := Response{resultList, nil}
+	encoder.Encode(resp)
+}
 
+// internal method for rel-only lookups that passes a list of potential matched hashes
+func (n *ChordNode)lookup_relonly_internal(req *Request, encoder *json.Encoder) {
+	triplets := n.Dict3
+	
+	p := req.Params
+	arr := p.([]interface{})
+	rel := arr[0].(string)
+	relPartialHashes_temp := arr[1].([]interface{})
+	relPartialHashes := make([]uint64, len(relPartialHashes_temp))
+	for i, elem := range relPartialHashes_temp {
+		relPartialHashes[i] = uint64(elem.(float64))	//don't ask, man. don't ask.
+	}
+	
+	resultList := query_rel(rel, triplets)
+	
+	for (n.get_successor_of_hash(relPartialHashes[0]) == n.Me) {
+		relPartialHashes = relPartialHashes[1:]
+		if (len(relPartialHashes) == 0) {
+			break
+		}
+	}
+
+	if (len(relPartialHashes) > 0) {		// only forward if hashes remain
+		successor := n.get_successor_of_hash(relPartialHashes[0])
+		forwardEncoder, decoder := createConnection(successor)
+		forwardedParams := make([]interface{}, 2)
+		forwardedParams[0] = rel
+		forwardedParams[1] = relPartialHashes
+		req := Request{Method: "lookup_keyonly_internal", Params: forwardedParams}
+		forwardEncoder.Encode(req)
+		forwardedResponse := new(Response)
+		decoder.Decode(&forwardedResponse)
+		
+		//add response to result list
+		forwardedResults := forwardedResponse.Result
+		fArr := forwardedResults.([]interface{})
+		for _, result := range fArr {
+			resultList = append(resultList, result.(map[string]interface{}))
+		}
+	}
+
+	resp := Response{resultList, nil}
+	encoder.Encode(resp)
 }
 
 func (n *ChordNode)delete(req *Request, encoder *json.Encoder){
@@ -739,7 +849,7 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 					now := time.Now()
 					dictVal["Accessed"] = now
 					dictVal["Modified"] = now
-					insertValueIntoTriplets(key, rel, dictVal, triplets)
+					updateTripletValue(i, key, rel, dictVal, triplets)
 				}
 			} else {
 				// insert() fails if key/rel already exists
@@ -796,6 +906,8 @@ func handleConnection(node *ChordNode, conn net.Conn){
 		node.lookup(req, encoder)
 	case "lookup_keyonly_internal" :
 		node.lookup_keyonly_internal(req, encoder)
+	case "lookup_relonly_internal" :
+		node.lookup_relonly_internal(req, encoder)
 	case "insert" :
 		node.insert(req, encoder, true)
 	case "delete" :
