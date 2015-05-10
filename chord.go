@@ -250,13 +250,38 @@ func (node *ChordNode)transfer_keys_on_join(req *Request, encoder *json.Encoder)
     fmt.Println("entered transfer_keys_on_join")
     forwarded_hashID := req.Params.(uint64)
     
+    return_triplets := make([]interface{}, 0)
+    triplets := node.Dict3
+    
+    // Loop through successor keys and check if key# <= node#
     for _, value := range node.Keys {
         if (value <= forwarded_hashID) {
-            
+            queryResult := query_hash(value, triplets)
+            if len(queryResult) != 0 {
+                for i := range queryResult {
+                    readBack, err := triplets.Read(i)
+                    if err != nil {
+                        panic(err)
+                    }
+                    if err := triplets.Delete(i); err != nil {
+                        panic(err)
+                    }
+                    return_triplets = append(return_triplets, readBack)
+                }
+                
+                // Delete hash from successor's Keys
+                keyRelHashIndex := node.find_key(value)
+                if (keyRelHashIndex > -1) {
+                    node.Keys = append(node.Keys[:keyRelHashIndex], node.Keys[keyRelHashIndex+1:]...)
+                }
+            }
         }
     }
-    // loop through successor keys and check if key# <= node#
-    // add those keys to node's Key list
+    
+    // Return the Dict3 values and Keys to the node joining the ring
+    res := Response{return_triplets, nil}
+    encoder.Encode(res)
+    return
 }
 
 func (node *ChordNode)successor_of_hash(hash uint64) string {
@@ -287,17 +312,30 @@ func (node *ChordNode)join(netAddr string) {
 	decoder.Decode(&res)
 	node.Successor = res.Result.(string)
     
-	//TODO: ask successor for all DICT3 data we should take from him
+	// Ask successor for all DICT3 data we should take from him
     successor_encoder, successor_decoder := createConnection(node.Successor)
     m = Request{"transfer_keys_on_join", node.HashID}
     encoder.Encode(m)
     res := new(Response)
     decoder.Decode(&res)
     
-    returned_keys := res.Result.([]uint64)
-    for _, value := range returned_keys {
-        node.Keys = append(node.Keys, value)
+    returned_triplets := res.Result.([]interface{})
+    triplets := node.Dict3
+    
+    for _, triplet := range returned_triplets {
+        keyRelHash := triplet["hash"]
+        _, err := triplets.Insert(map[string]interface{}{
+            "hash": keyRelHash,
+            "key": triplet["key"],
+            "rel": triplet["rel"],
+            "val": triplet["val"]})
+        if err != nil {
+            panic(err)
+        }
+        node.Keys = append(node.Keys, keyRelHash)
     }
+    
+    return nil
 }
 
 //find the immediate successor of node with given identifier
@@ -667,7 +705,7 @@ func (n *ChordNode)delete(req *Request, encoder *json.Encoder){
 			}
             
             // Delete hash from node's Keys
-            keyRelHashIndex = n.find_key(readBack["hash"])
+            keyRelHashIndex := n.find_key(readBack["hash"])
             if (keyRelHashIndex > -1) {
                 n.Keys = append(n.Keys[:keyRelHashIndex], n.Keys[keyRelHashIndex+1:]...)
             }
@@ -776,10 +814,10 @@ func (n *ChordNode)shutdown(req *Request, encoder *json.Encoder) {
         successor_triplets := make([]interface{}, 0)
         triplets := n.Dict3
         for _, value := range n.Keys {
-            queryResult := query_hash(value, successor_triplets)
+            queryResult := query_hash(value, triplets)
             if len(queryResult) != 0 {
                 for i := range queryResult {
-                    readBack, err := successor_triplets.Read(i)
+                    readBack, err := triplets.Read(i)
                     if err != nil {
                         panic(err)
                     }
