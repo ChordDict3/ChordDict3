@@ -875,6 +875,10 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 	key := arr[0].(string)
 	rel := arr[1].(string)
 	val := arr[2]
+	perms := "RW"
+	if (len(arr) == 4) {
+		perms = arr[3].(string)
+	}
 
 	keyRelHash := generateKeyRelHash(key, rel, n.M)
 	fmt.Printf("keyRelHash: %b\n", keyRelHash)
@@ -919,7 +923,7 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 				encoder.Encode(m)
 			}
 		} else {
-			dictVal := makeDictValue(val, "RW")
+			dictVal := makeDictValue(val, perms)
 			_, err := triplets.Insert(map[string]interface{}{
 				"key": key,
 				"rel": rel,
