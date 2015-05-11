@@ -256,11 +256,13 @@ func (node *ChordNode)transfer_keys_on_shutdown(req *Request, encoder *json.Enco
     
     for _, t := range forwarded_triplets {
         triplet := t.(map[string]interface{})
-        keyRelHash := uint64(triplet["hash"].(float64))
+		key := triplet["key"].(string)
+		rel := triplet["rel"].(string)
+        keyRelHash := generateKeyRelHash(key, rel, node.M)
         _, err := triplets.Insert(map[string]interface{}{
             "hash": keyRelHash,
-            "key": triplet["key"].(string),
-            "rel": triplet["rel"].(string),
+            "key": key,
+            "rel": rel,
             "val": triplet["val"].(map[string]interface{})})
         if err != nil {
             panic(err)
@@ -311,7 +313,7 @@ func (node *ChordNode)transfer_keys_on_join(req *Request, encoder *json.Encoder)
     return
 }
 
-func (node *ChordNode)successor_of_hash(hash uint64) string {
+func (node *ChordNode)get_successor_of_hash(hash uint64) string {
 	if (inChordRange(hash, generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Me, node.M), node.M)) {
 		return node.Me
 	} else if (inChordRange(hash, generateNodeHash(node.Me, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
@@ -320,13 +322,13 @@ func (node *ChordNode)successor_of_hash(hash uint64) string {
 		return node.Successor
 	}
 }
-/*
+
 func (node *ChordNode) create() error {
 	node.Predecessor = ""
 	node.Successor = node.Me
 	return nil
 }
-*/
+
 //join an existing chord ring containing node with identifier
 func (node *ChordNode)join(netAddr string) {
 	fmt.Println("entered join")
@@ -359,20 +361,14 @@ func (node *ChordNode)join(netAddr string) {
     successor_decoder.Decode(&res)
 
     returned_triplets := res.Result.([]interface{})
-    triplets := node.Dict3
     
     for _, t := range returned_triplets {
         triplet := t.(map[string]interface{})
-        keyRelHash := uint64(triplet["hash"].(float64))
-        _, err := triplets.Insert(map[string]interface{}{
-            "hash": keyRelHash,
-            "key": triplet["key"].(string),
-            "rel": triplet["rel"].(string),
-            "val": triplet["val"].(map[string]interface{})})
-        if err != nil {
-            panic(err)
-        }
-        node.Keys = append(node.Keys, keyRelHash)
+		key := triplet["key"].(string)
+		rel := triplet["rel"].(string)
+		val := triplet["val"].(map[string]interface{})
+		node.insertValueIntoTriplets(key, rel, val)
+        node.Keys = append(node.Keys, generateKeyRelHash(key, rel, node.M))
     }
     
     return
@@ -495,10 +491,10 @@ func readConfig()(config *Configuration){
 //////
 // Dict functions
 //////
-func (node *ChordNode)insertValueIntoTriplets(key string, rel string, val map[string]interface{}) {
+func (node *ChordNode)insertValueIntoTriplets(key string, rel string, val interface{}) {
 	triplets := node.Dict3
 	_, err := triplets.Insert(map[string]interface{}{
-		"hash": generateKeyRelHash(key, rel, node.M)
+		"hash": strconv.FormatUint(generateKeyRelHash(key, rel, node.M), 16), //16 means 'hex'
 		"key": key,
 		"rel": rel,
 		"val": val})
@@ -507,9 +503,10 @@ func (node *ChordNode)insertValueIntoTriplets(key string, rel string, val map[st
 	}
 }
 
-func updateTripletValue(docId int, hash uint64, key string, rel string, val map[string]interface{}, triplets *db.Col) {
+func (node *ChordNode)updateTripletValue(docId int, key string, rel string, val interface{}) {
+	triplets := node.Dict3
 	err := triplets.Update(docId, map[string]interface{} {
-		"hash": hash,
+		"hash": strconv.FormatUint(generateKeyRelHash(key, rel, node.M), 16),
 		"key": key,
 		"rel": rel,
 		"val": val})
@@ -582,7 +579,8 @@ func (node *ChordNode)fix_fingers() {
 	}
 }
 
-func query_key(key string, triplets *db.Col)  []map[string]interface{}{
+func (node *ChordNode)query_key(key string)  []map[string]interface{}{
+	triplets := node.Dict3
 
 	var query interface{}
 
@@ -604,10 +602,9 @@ func query_key(key string, triplets *db.Col)  []map[string]interface{}{
 			
 			val := readBack["val"].(map[string]interface{})
 			rel := readBack["rel"].(string)
-			h := readBack["hash"].(uint64)
 			//update with new Accessed time
 			val["Accessed"] = time.Now().Unix()
-			updateTripletValue(i, h, key, rel, val, triplets)
+			node.updateTripletValue(i, key, rel, val)
 			
 			resultList = append(resultList, val)
 		}
@@ -615,7 +612,8 @@ func query_key(key string, triplets *db.Col)  []map[string]interface{}{
 	return resultList
 }
 
-func query_rel(rel string, triplets *db.Col) []map[string]interface{}{
+func (node *ChordNode)query_rel(rel string) []map[string]interface{}{
+	triplets := node.Dict3
 
 	var query interface{}
 
@@ -637,10 +635,9 @@ func query_rel(rel string, triplets *db.Col) []map[string]interface{}{
 			
 			val := readBack["val"].(map[string]interface{})
 			key := readBack["key"].(string)
-			h := readBack["hash"].(uint64)
 			//update with new Accessed time
 			val["Accessed"] = time.Now().Unix()
-			updateTripletValue(i, h, key, rel, val, triplets)
+			node.updateTripletValue(i, key, rel, val)
 			
 			resultList = append(resultList, val)
 		}
@@ -727,8 +724,7 @@ func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
 				val := readBack["val"].(map[string]interface{})
 				//update with new Accessed time
 				val["Accessed"] = time.Now().Unix()
-				h := readBack["hash"].(uint64)
-				updateTripletValue(i, h, key, rel, val, triplets)
+				n.updateTripletValue(i, key, rel, val)
 				//send response
 				m := Response{val, nil}
 				encoder.Encode(m)
@@ -754,14 +750,12 @@ func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
 }
 
 func (n *ChordNode)lookup_keyonly(req *Request, encoder *json.Encoder) {
-	triplets := n.Dict3
-	
 	p := req.Params
 	arr := p.([]interface{})
 	key := arr[0].(string)
 	
 	//begin building result list of satisfied keys
-	resultList := query_key(key, triplets)
+	resultList := n.query_key(key)
 	
 	keyPartialHashes := generateKeyPartialHashes(key, n.M)
 	for (n.get_successor_of_hash(keyPartialHashes[0]) == n.Me) {
@@ -795,8 +789,6 @@ func (n *ChordNode)lookup_keyonly(req *Request, encoder *json.Encoder) {
 
 // internal method for key-only lookups that passes a list of potential matched hashes
 func (n *ChordNode)lookup_keyonly_internal(req *Request, encoder *json.Encoder) {
-	triplets := n.Dict3
-	
 	p := req.Params
 	arr := p.([]interface{})
 	key := arr[0].(string)
@@ -806,7 +798,7 @@ func (n *ChordNode)lookup_keyonly_internal(req *Request, encoder *json.Encoder) 
 		keyPartialHashes[i] = uint64(elem.(float64))	//don't ask, man. don't ask.
 	}
 	
-	resultList := query_key(key, triplets)
+	resultList := n.query_key(key)
 	
 	for (n.get_successor_of_hash(keyPartialHashes[0]) == n.Me) {
 		keyPartialHashes = keyPartialHashes[1:]
@@ -839,14 +831,12 @@ func (n *ChordNode)lookup_keyonly_internal(req *Request, encoder *json.Encoder) 
 }
 
 func (n *ChordNode)lookup_relonly(req *Request, encoder *json.Encoder) {
-	triplets := n.Dict3
-	
 	p := req.Params
 	arr := p.([]interface{})
 	rel := arr[1].(string)
 	
 	//begin building result list of satisfied keys
-	resultList := query_rel(rel, triplets)
+	resultList := n.query_rel(rel)
 	
 	relPartialHashes := generateRelPartialHashes(rel, n.M)
 	for (n.get_successor_of_hash(relPartialHashes[0]) == n.Me) {
@@ -880,8 +870,6 @@ func (n *ChordNode)lookup_relonly(req *Request, encoder *json.Encoder) {
 
 // internal method for rel-only lookups that passes a list of potential matched hashes
 func (n *ChordNode)lookup_relonly_internal(req *Request, encoder *json.Encoder) {
-	triplets := n.Dict3
-	
 	p := req.Params
 	arr := p.([]interface{})
 	rel := arr[0].(string)
@@ -891,7 +879,7 @@ func (n *ChordNode)lookup_relonly_internal(req *Request, encoder *json.Encoder) 
 		relPartialHashes[i] = uint64(elem.(float64))	//don't ask, man. don't ask.
 	}
 	
-	resultList := query_rel(rel, triplets)
+	resultList := n.query_rel(rel)
 	
 	for (n.get_successor_of_hash(relPartialHashes[0]) == n.Me) {
 		relPartialHashes = relPartialHashes[1:]
@@ -906,7 +894,7 @@ func (n *ChordNode)lookup_relonly_internal(req *Request, encoder *json.Encoder) 
 		forwardedParams := make([]interface{}, 2)
 		forwardedParams[0] = rel
 		forwardedParams[1] = relPartialHashes
-		req := Request{Method: "lookup_keyonly_internal", Params: forwardedParams}
+		req := Request{Method: "lookup_relonly_internal", Params: forwardedParams}
 		forwardEncoder.Encode(req)
 		forwardedResponse := new(Response)
 		decoder.Decode(&forwardedResponse)
@@ -979,7 +967,8 @@ func (n *ChordNode)purge(req *Request, encoder *json.Encoder){
 			}
             
             // Delete hash from node's Keys
-            keyRelHashIndex := n.find_key(readBack["hash"].(uint64))
+			hash, _ := strconv.ParseUint(readBack["hash"].(string), 16, 64)	// 16 is base repr. of string, 64 is uint size
+            keyRelHashIndex := n.find_key(hash)
             if (keyRelHashIndex > -1) {
                 n.Keys = append(n.Keys[:keyRelHashIndex], n.Keys[keyRelHashIndex+1:]...)
             }
@@ -1083,8 +1072,7 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 					now := time.Now().Unix()
 					dictVal["Accessed"] = now
 					dictVal["Modified"] = now
-					h := readBack["hash"].(uint64)
-					updateTripletValue(i, h, key, rel, dictVal, triplets)
+					n.updateTripletValue(i, key, rel, dictVal)
 				}
 			} else {
 				// insert() fails if key/rel already exists
@@ -1093,15 +1081,8 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 			}
 		} else {
 			dictVal := makeDictValue(val, perms)
-			_, err := triplets.Insert(map[string]interface{}{
-                "hash": keyRelHash,
-				"key": key,
-				"rel": rel,
-				"val": dictVal})
+			n.insertValueIntoTriplets(key, rel, dictVal)
             n.Keys = append(n.Keys, keyRelHash)
-			if err != nil {
-				panic(err)
-			}
 			//fmt.Println("Inserting ", docID)
 			
 			//insertOrUpdate doesn't have a return value
