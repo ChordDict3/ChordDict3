@@ -15,6 +15,7 @@ import (
 	"hash/crc64"
 	"encoding/json"
 	"github.com/HouzuoGuo/tiedot/db"
+	"strconv"
 )
 
 
@@ -56,9 +57,9 @@ type Configuration struct{
 type DictValue struct {
 	Content interface{}
 	Size float64 
-	Created time.Time
-	Modified time.Time
-	Accessed time.Time
+	Created int64
+	Modified int64
+	Accessed int64
 	Permission string
 }
 
@@ -127,7 +128,7 @@ func generateRelPartialHashes(rel string, m uint64) []uint64 {
 }
 
 func makeDictValue(content interface{}, permission string) DictValue {
-	now := time.Now()
+	now := time.Now().Unix()
 	dictVal := DictValue{
 		Content: content,
 		Size: float64(reflect.TypeOf(content).Size()),
@@ -153,16 +154,19 @@ func create(config Configuration) *ChordNode{
 	}
 	dbName := "Triplets"+config.Port
 	if err := myDB.Create(dbName); err != nil {
-		panic(err)
+		//ignoring this error?
+		//panic(err)
 	}	
 	triplets := myDB.Use(dbName)
 	// Create indexes here??
 	// TODO: Do not create index if it already exists?
 	if err := triplets.Index([]string{"key"}); err != nil {
-		panic(err)
+		//ignoring?
+		//panic(err)
 	}
 	if err := triplets.Index([]string{"rel"}); err != nil {
-		panic(err)
+		//ignoring?
+		//panic(err)
 	}
 	c := ChordNode{
 		Me: netAddr,
@@ -483,8 +487,8 @@ func query_key(key string, triplets *db.Col)  []map[string]interface{}{
 			val := readBack["val"].(map[string]interface{})
 			rel := readBack["rel"].(string)
 			//update with new Accessed time
+			val["Accessed"] = time.Now().Unix()
 			updateTripletValue(i, key, rel, val, triplets)
-			val["Accessed"] = time.Now()
 			
 			resultList = append(resultList, val)
 		}
@@ -515,8 +519,8 @@ func query_rel(rel string, triplets *db.Col) []map[string]interface{}{
 			val := readBack["val"].(map[string]interface{})
 			key := readBack["key"].(string)
 			//update with new Accessed time
+			val["Accessed"] = time.Now().Unix()
 			updateTripletValue(i, key, rel, val, triplets)
-			val["Accessed"] = time.Now()
 			
 			resultList = append(resultList, val)
 		}
@@ -565,9 +569,8 @@ func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
 				}
 				
 				val := readBack["val"].(map[string]interface{})
-				fmt.Println(val)
 				//update with new Accessed time
-				val["Accessed"] = time.Now()
+				val["Accessed"] = time.Now().Unix()
 				updateTripletValue(i, key, rel, val, triplets)
 				//send response
 				m := Response{val, nil}
@@ -763,19 +766,77 @@ func (n *ChordNode)lookup_relonly_internal(req *Request, encoder *json.Encoder) 
 	encoder.Encode(resp)
 }
 
+//needs a time to purge 'older than' entries
+//key:nil rel:nil value: date to purge after
+//sample date "2015-05-08T16:55:55.326107309-04:00"
+
+func (n *ChordNode)purge(req *Request, encoder *json.Encoder){
+
+	fmt.Println("entering purge")
+	triplets := n.Dict3
+	
+	p := req.Params
+	arr := p.([]interface{})
+
+	val := arr[2].(string)
+	
+	time_int, err := strconv.ParseInt(val, 10, 64) 
+	if err != nil {
+		panic(err)
+	}
+	
+	purge_time := time.Unix(time_int, 0)
+	purge_list := make([]int, 0)
+	
+	triplets.ForEachDoc(func(id int, docContent []byte) (willMoveOn bool) {
+		fmt.Println("Document", id, "is", string(docContent))
+
+		readBack, err := triplets.Read(id)
+		if err != nil {
+			panic(err)
+		}
+			
+		dictVal := readBack["val"].(map[string]interface{})
+		//Check permissions before deleting, can't delete if "R"
+		accessed_time := int64(dictVal["Accessed"].(float64))
+		
+		if time.Unix(accessed_time, 0).Before(purge_time) {
+			purge_list = append(purge_list, id)
+		}
+		
+		return true  // move on to the next document OR
+	})
+
+	fmt.Println("triplets to purge")
+	for i := 0; i < len(purge_list); i++ {
+		readBack, err := triplets.Read(purge_list[i])
+		if err != nil {
+			panic(err)
+		}
+			
+	 	dictVal := readBack["val"].(map[string]interface{})
+		//Check permissions before deleting, can't delete if "R"
+		if dictVal["Permission"] == "RW" {
+			fmt.Println("deleting ", purge_list[i])
+			if err := triplets.Delete(purge_list[i]); err != nil {
+				panic(err)
+			}
+		}
+	}
+}
+
 func (n *ChordNode)delete(req *Request, encoder *json.Encoder){
 	triplets := n.Dict3
-
+	
 	p := req.Params
 	arr := p.([]interface{})
 	
 	key := arr[0].(string)
 	rel := arr[1].(string)
 
-
 	queryResult := query_key_rel(key, rel, triplets)
 
-	if len(queryResult) != 0 {
+	if (len(queryResult) > 0) {
 		for i := range queryResult {
 			readBack, err := triplets.Read(i)
 			if err != nil {
@@ -785,6 +846,7 @@ func (n *ChordNode)delete(req *Request, encoder *json.Encoder){
 			dictVal := readBack["val"].(map[string]interface{})
 			//Check permissions before deleting, can't delete if "R"
 			if dictVal["Permission"] == "RW" {
+				fmt.Println("deleting ", i)
 				if err := triplets.Delete(i); err != nil {
 					panic(err)
 				}
@@ -846,7 +908,7 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 					//update content
 					dictVal["Content"] = val
 					//update with new Accessed/Modified time
-					now := time.Now()
+					now := time.Now().Unix()
 					dictVal["Accessed"] = now
 					dictVal["Modified"] = now
 					updateTripletValue(i, key, rel, dictVal, triplets)
@@ -909,9 +971,13 @@ func handleConnection(node *ChordNode, conn net.Conn){
 	case "lookup_relonly_internal" :
 		node.lookup_relonly_internal(req, encoder)
 	case "insert" :
+		node.insert(req, encoder, false)
+	case "insertOrUpdate" :
 		node.insert(req, encoder, true)
 	case "delete" :
 		node.delete(req, encoder)
+	case "purge" :
+		node.purge(req, encoder)
 	}
 }
 

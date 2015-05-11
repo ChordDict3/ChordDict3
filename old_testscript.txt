@@ -1,0 +1,3 @@
+{"method": "insert", "params": ["keyB","relB","hello"]}
+{"method": "lookup", "params": ["keyB","relB"]}
+{"method": "delete", "params": ["keyB","relB",""]}
