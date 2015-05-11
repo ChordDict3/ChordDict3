@@ -159,13 +159,13 @@ func create(config Configuration) *ChordNode{
 	// Create indexes here??
 	// TODO: Do not create index if it already exists? --- the Index function already handles this
     if err := triplets.Index([]string{"hash"}); err != nil {
-        panic(err)
+	//panic(err)
     }
     if err := triplets.Index([]string{"key"}); err != nil {
-        panic(err)
+        //panic(err)
     }
     if err := triplets.Index([]string{"rel"}); err != nil {
-        panic(err)
+        //panic(err)
     }
 	c := ChordNode{
 		Me: netAddr,
