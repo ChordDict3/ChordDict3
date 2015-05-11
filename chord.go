@@ -14,6 +14,7 @@ import (
 	"io/ioutil"
 	"hash/crc64"
 	"encoding/json"
+    "strconv"
 	"github.com/HouzuoGuo/tiedot/db"
 )
 
@@ -40,7 +41,7 @@ type Configuration struct{
 	ServerID string `json:"serverID"`
 	Protocol string `json:"protocol"`
 	IpAddress string `json:"ipAddress"`
-	Port string `json:"port"`
+	Port int `json:"port"`
 	M uint64 `json:"M"`
 	PersistentStorageContainer struct {
 		File string `json:"file"`
@@ -112,7 +113,8 @@ func makeDictValue(content interface{}, permission string) DictValue {
 }
 
 func create(config Configuration) *ChordNode{
-	netAddr := config.IpAddress + ":" + config.Port
+    port := strconv.FormatInt(int64(config.Port), 10)
+	netAddr := config.IpAddress + ":" + port
 	hash := generateNodeHash(netAddr, config.M)
 	
 	myDBDir := config.PersistentStorageContainer.File
@@ -121,24 +123,21 @@ func create(config Configuration) *ChordNode{
 	if err != nil {
 		panic(err)
 	}
-	dbName := "Triplets"+config.Port
+	dbName := "Triplets"+port
 	if err := myDB.Create(dbName); err != nil {
 		panic(err)
 	}	
 	triplets := myDB.Use(dbName)
 	// Create indexes here??
-	// TODO: Do not create index if it already exists?
-	if err := triplets.Index([]string{"key"}); err != nil {
-		panic(err)
-	}
-	if err := triplets.Index([]string{"rel"}); err != nil {
-		panic(err)
-	}
+	// TODO: Do not create index if it already exists? --- the Index function already handles this
+    if err := triplets.Index([]string{"hash", "key", "rel"}); err != nil {
+        panic(err)
+    }
 	c := ChordNode{
 		Me: netAddr,
 		Successor: "",
 		Predecessor: "",
-		FingerTable: make([]string, 0),
+		FingerTable: make([]string, 3),
 		HashID: hash,
 		M: config.M,
 		Dict3: triplets,
@@ -228,20 +227,21 @@ func (node *ChordNode)transfer_keys_on_shutdown(req *Request, encoder *json.Enco
     
     triplets := node.Dict3
     
-    for _, triplet := range forwarded_triplets {
-        keyRelHash := triplet["hash"]
+    for _, t := range forwarded_triplets {
+        triplet := t.(map[string]interface{})
+        keyRelHash := triplet["hash"].(uint64)
         _, err := triplets.Insert(map[string]interface{}{
             "hash": keyRelHash,
-            "key": triplet["key"],
-            "rel": triplet["rel"],
-            "val": triplet["val"]})
+            "key": triplet["key"].(string),
+            "rel": triplet["rel"].(string),
+            "val": triplet["val"].(map[string]interface{})})
         if err != nil {
             panic(err)
         }
         node.Keys = append(node.Keys, keyRelHash)
     }
     
-    m := Response("Success", nil)
+    m := Response{"Success", nil}
     encoder.Encode(m)
     return
 }
@@ -313,29 +313,30 @@ func (node *ChordNode)join(netAddr string) {
 	node.Successor = res.Result.(string)
     
 	// Ask successor for all DICT3 data we should take from him
-    successor_encoder, successor_decoder := createConnection(node.Successor)
+    encoder, decoder = createConnection(node.Successor)
     m = Request{"transfer_keys_on_join", node.HashID}
     encoder.Encode(m)
-    res := new(Response)
+    res = new(Response)
     decoder.Decode(&res)
     
     returned_triplets := res.Result.([]interface{})
     triplets := node.Dict3
     
-    for _, triplet := range returned_triplets {
-        keyRelHash := triplet["hash"]
+    for _, t := range returned_triplets {
+        triplet := t.(map[string]interface{})
+        keyRelHash := triplet["hash"].(uint64)
         _, err := triplets.Insert(map[string]interface{}{
             "hash": keyRelHash,
-            "key": triplet["key"],
-            "rel": triplet["rel"],
-            "val": triplet["val"]})
+            "key": triplet["key"].(string),
+            "rel": triplet["rel"].(string),
+            "val": triplet["val"].(map[string]interface{})})
         if err != nil {
             panic(err)
         }
         node.Keys = append(node.Keys, keyRelHash)
     }
     
-    return nil
+    return
 }
 
 //find the immediate successor of node with given identifier
@@ -351,7 +352,7 @@ func (node *ChordNode)find_successor(req *Request, encoder *json.Encoder) {
 	} else {
 		//find closest finger and forward request there; for now just forward around ring
 		//encoder2, decoder2 := createConnection(node.Successor) //change to closest finger
-		closest_preceding_node := closest_preceding_node(generateNodeHash(netAddr, node.M), node.M)
+		closest_preceding_node := node.closest_preceding_node(generateNodeHash(netAddr, node.M))
 		encoder2, decoder2 := createConnection(closest_preceding_node)
 		m := Request{"find_successor", netAddr}
 		encoder2.Encode(m)
@@ -419,7 +420,7 @@ func (node *ChordNode)notify(req *Request, encoder *json.Encoder) {
 	}
 }
 
-func (node *ChordNode)successor_of_hash(req *Request, encoder *json.Encoder) {
+func (node *ChordNode)successor_of_hash_rpc(req *Request, encoder *json.Encoder) {
 	fmt.Println("in succ of hash")
 	hash := uint64(req.Params.(float64))
 	retval := ""
@@ -435,9 +436,9 @@ func (node *ChordNode)successor_of_hash(req *Request, encoder *json.Encoder) {
 		encoder.Encode(res)
 	} else {
 		//encoder2, decoder2 := createConnection(node.Successor) //should change this to closest finger
-		closest_preceding_node := node.closest_preceding_node(hash, node.M)
+		closest_preceding_node := node.closest_preceding_node(hash)
 		encoder2, decoder2 := createConnection(closest_preceding_node)
-		m := Request{"successor_of_hash", hash}
+		m := Request{"successor_of_hash_rpc", hash}
 		encoder2.Encode(m)
 		res := new(Response)
 		decoder2.Decode(&res)
@@ -461,7 +462,7 @@ func (node *ChordNode)fix_fingers() {
 			finger_value = node.Me
 		} else if (node.Me != node.Successor) {
 			encoder, decoder := createConnection(node.Successor)
-			m := Request{"successor_of_hash", start}
+			m := Request{"successor_of_hash_rpc", start}
 			encoder.Encode(m)
 			res := new(Response)
 			decoder.Decode(&res)
@@ -469,16 +470,16 @@ func (node *ChordNode)fix_fingers() {
 		} else {
 			finger_value = node.Me
 		}
-		node.Fingers[index] = finger_value
+		node.FingerTable[index] = finger_value
 		index++
 	}
 }
 
 func (node *ChordNode)closest_preceding_node(hash uint64) string {
 	for i := uint64(1); i < node.M; i++ {
-		if(node.Fingers[i-1] != "" && node.Fingers[i] != "") {
-			if(inChordRange(hash, generateNodeHash(node.Fingers[i-1], node.M), generateNodeHash(node.Fingers[i], node.M), node.M)) {
-				return node.Fingers[i-1]
+		if(node.FingerTable[i-1] != "" && node.FingerTable[i] != "") {
+			if(inChordRange(hash, generateNodeHash(node.FingerTable[i-1], node.M), generateNodeHash(node.FingerTable[i], node.M), node.M)) {
+				return node.FingerTable[i-1]
 			}
 		}
 	}
@@ -618,7 +619,7 @@ func query_hash(hash uint64, triplets *db.Col) (queryResult map[int]struct{}) {
 
     var query interface{}
 
-	json.Unmarshal([]byte(`{"eq": "` + hash + `", "in": ["hash"]}`), &query)
+	json.Unmarshal([]byte(`{"eq": hash, "in": ["hash"]}`), &query)
 
 	q_result := make(map[int]struct{}) // query result (document IDs) goes into map keys
 
@@ -646,6 +647,9 @@ func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
 	
 	key := arr[0].(string)
 	rel := arr[1].(string)
+    
+    //get hash for key/rel
+	keyRelHash := generateKeyRelHash(key, rel, n.M)
 
 	// See if there this key/val is already in DB
 	queryResult := query_key_rel(key, rel, triplets)
@@ -660,15 +664,13 @@ func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
 			fmt.Println(val)
 			//update with new Accessed time
 			val["Accessed"] = time.Now()
-			insertValueIntoTriplets(key, rel, val, triplets)
+			insertValueIntoTriplets(keyRelHash, key, rel, val, triplets)
 			//send response
 			m := Response{val, nil}
 			encoder.Encode(m)
 		}
 		
 	} else {	// Key/rel not in DB
-		//get hash for key/rel
-		keyRelHash := generateKeyRelHash(key, rel, n.M)
 		//find closest successor/finger node for keyRelHash
 		successor := n.successor_of_hash(keyRelHash)
 		//forward request to successor
@@ -681,13 +683,14 @@ func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
 }
 
 func (n *ChordNode)delete(req *Request, encoder *json.Encoder){
+    fmt.Println("entering delete")
+    triplets := n.Dict3
 
 	p := req.Params
 	arr := p.([]interface{})
 	
 	key := arr[0].(string)
 	rel := arr[1].(string)
-
 
 	queryResult := query_key_rel(key, rel, triplets)
 
@@ -705,7 +708,7 @@ func (n *ChordNode)delete(req *Request, encoder *json.Encoder){
 			}
             
             // Delete hash from node's Keys
-            keyRelHashIndex := n.find_key(readBack["hash"])
+            keyRelHashIndex := n.find_key(readBack["hash"].(uint64))
             if (keyRelHashIndex > -1) {
                 n.Keys = append(n.Keys[:keyRelHashIndex], n.Keys[keyRelHashIndex+1:]...)
             }
@@ -792,23 +795,23 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 
 func (n *ChordNode)shutdown(req *Request, encoder *json.Encoder) {
     // Get the node's hash ID
-    hashID uint64 = n.HashID
+    //hashID := n.HashID
     // Set the hash ID to something unreachable
-    n.HashID = -1
+    n.HashID = powerof(2, n.M) + 1
     
     // Get the node's predecessor
-    predecessor string := n.Predecessor
+    predecessor := n.Predecessor
     // Set the node's predecessor to nothing
     n.Predecessor = ""
     
     // Get the node's successor
-    successor string := n.Successor
+    successor := n.Successor
     // Set the node's successor to nothing
     n.Successor = ""
     
     // If this is the only node in the ring
     if (successor == predecessor && successor == n.Me) {
-        n.Dict3.Close()
+        // TODO: dump database
     } else {
         // Copy all keys and Dict3 triplets from node to successor        
         successor_triplets := make([]interface{}, 0)
@@ -832,7 +835,7 @@ func (n *ChordNode)shutdown(req *Request, encoder *json.Encoder) {
         m := Request{"transfer_keys_on_shutdown", successor_triplets}
         successor_encoder.Encode(m)
         res := new(Response)
-        decoder.Decode(&res)
+        successor_decoder.Decode(&res)
     }
     
 	n.Keys = make([]uint64, 0)
@@ -924,9 +927,9 @@ func main() {
 	go func() {
 		for t2 := range ticker2.C {
 			node.fix_fingers()
-			fmt.Println("fingers[0]: ", node.Fingers[0])
-			fmt.Println("fingers[1]: ", node.Fingers[1])
-			fmt.Println("fingers[2]: ", node.Fingers[2])
+			fmt.Println("fingertable[0]: ", node.FingerTable[0])
+			fmt.Println("fingertable[1]: ", node.FingerTable[1])
+			fmt.Println("fingertable[2]: ", node.FingerTable[2])
 
 			_ = t2
 		}
