@@ -220,7 +220,6 @@ func (node *ChordNode)get_successor(req *Request, encoder *json.Encoder){
 	m := Response{node.Successor, nil}
 	encoder.Encode(m)
 	return
-
 }
 
 func (node *ChordNode)get_predecessor(req *Request, encoder *json.Encoder){
@@ -232,18 +231,20 @@ func (node *ChordNode)get_predecessor(req *Request, encoder *json.Encoder){
 func (node *ChordNode)set_predecessor(req *Request, encoder *json.Encoder){
 	id := req.Params.(string)
 	node.Predecessor = id
-//	m := Response{nil, nil}
-//	encoder.Encode(m)
 	return
+}
+
+func (node *ChordNode)set_predecessor_and_respond(req *Request, encoder *json.Encoder) {
+    id := req.Params.(string)
+    node.Predecessor = id
+    m := Response{"Success", nil}
+    encoder.Encode(m)
 }
 
 func (node *ChordNode)set_successor(req *Request, encoder *json.Encoder){
 	id := req.Params.(string)
-	node.Successor = id
-	
-	//status(node, "Successor updated")
-		
-	m := Response{nil, nil}
+	node.Successor = id		
+	m := Response{"Success", nil}
 	encoder.Encode(m)
 	return
 }
@@ -252,22 +253,13 @@ func (node *ChordNode)transfer_keys_on_shutdown(req *Request, encoder *json.Enco
     fmt.Println("entered transfer_keys_on_shutdown")
     forwarded_triplets := req.Params.([]interface{})
     
-    triplets := node.Dict3
-    
     for _, t := range forwarded_triplets {
         triplet := t.(map[string]interface{})
 		key := triplet["key"].(string)
 		rel := triplet["rel"].(string)
-        keyRelHash := generateKeyRelHash(key, rel, node.M)
-        _, err := triplets.Insert(map[string]interface{}{
-            "hash": keyRelHash,
-            "key": key,
-            "rel": rel,
-            "val": triplet["val"].(map[string]interface{})})
-        if err != nil {
-            panic(err)
-        }
-        node.Keys = append(node.Keys, keyRelHash)
+		val := triplet["val"].(map[string]interface{})
+        node.insertValueIntoTriplets(key, rel, val)
+        node.Keys = append(node.Keys, generateKeyRelHash(key, rel, node.M))
     }
     
     m := Response{"Success", nil}
@@ -555,7 +547,6 @@ func (node *ChordNode)fix_fingers() {
 	index := 0
 	for i := uint64(0); i < node.M; i++ {
 		start := uint64((node.HashID + powerof(2,i)) % powerof(2,node.M))
-		
 		if(inChordRange(start, generateNodeHash(node.Me, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
 			finger_value = node.Successor
 		} else if(inChordRange(start, generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Me, node.M), node.M)) {
@@ -1001,6 +992,13 @@ func (n *ChordNode)delete(req *Request, encoder *json.Encoder){
 				if err := triplets.Delete(i); err != nil {
 					panic(err)
 				}
+                
+                // Delete hash from node's Keys
+                hash, _ := strconv.ParseUint(readBack["hash"].(string), 16, 64)	// 16 is base repr. of string, 64 is uint size
+                keyRelHashIndex := n.find_key(hash)
+                if (keyRelHashIndex > -1) {
+                    n.Keys = append(n.Keys[:keyRelHashIndex], n.Keys[keyRelHashIndex+1:]...)
+                }
 			}
 		}
 	} else {
@@ -1144,6 +1142,22 @@ func (n *ChordNode)shutdown(req *Request, encoder *json.Encoder) {
         res := new(Response)
         successor_decoder.Decode(&res)
         
+        // Set successor's predecessor to nothing
+        successor_encoder, successor_decoder = createConnection(successor)
+        if (successor_encoder == nil && successor_decoder == nil) { // Something went wrong
+            fmt.Println("Could not connect to the current node's successor to reset its predecessor.")
+            os.Exit(1)
+            return
+        }
+        if (successor == predecessor) { // If there are only two nodes right now
+            m = Request{"set_predecessor_and_respond", ""}
+        } else {
+            m = Request{"set_predecessor_and_respond", predecessor}
+        }
+        successor_encoder.Encode(m)
+        res = new(Response)
+        successor_decoder.Decode(&res)
+        
         // Set predecessor's successor to current node's successor
         predecessor_encoder, predecessor_decoder := createConnection(predecessor)
         if (predecessor_encoder == nil && predecessor_decoder == nil) { // Something went wrong
@@ -1155,30 +1169,6 @@ func (n *ChordNode)shutdown(req *Request, encoder *json.Encoder) {
         predecessor_encoder.Encode(m)
         res = new(Response)
         predecessor_decoder.Decode(&res)
-        
-        // Set successor's predecessor to current node's predecessor
-        successor_encoder, successor_decoder = createConnection(successor)
-        if (successor_encoder == nil && successor_decoder == nil) { // Something went wrong
-            fmt.Println("Could not connect to the current node's successor to reset its predecessor.")
-            os.Exit(1)
-            return
-        }
-        m = Request{"notify", predecessor}
-        successor_encoder.Encode(m)
-        res = new(Response)
-        successor_decoder.Decode(&res)
-        
-        // Tell the successor to fix its fingers
-        successor_encoder, successor_decoder = createConnection(successor)
-        if (successor_encoder == nil && successor_decoder == nil) { // Something went wrong
-            fmt.Println("Could not connect to the current node's successor to fix finger table.")
-            os.Exit(1)
-            return
-        }
-        m = Request{"fix_fingers", nil}
-        successor_encoder.Encode(m)
-        res = new(Response)
-        successor_decoder.Decode(&res)
     }
     
 	n.Keys = make([]uint64, 0)
@@ -1211,6 +1201,8 @@ func handleConnection(node *ChordNode, conn net.Conn){
 		node.set_successor(req, encoder)
 	case "set_predecessor" :
 		node.set_predecessor(req, encoder)
+    case "set_predecessor_and_respond" :
+        node.set_predecessor_and_respond(req, encoder)
 	case "notify" :
 		node.notify(req, encoder)
     case "successor_of_hash_rpc" :
