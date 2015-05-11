@@ -1109,7 +1109,7 @@ func (n *ChordNode)shutdown(req *Request, encoder *json.Encoder) {
     n.Successor = ""
     
     // If this is the only node in the ring
-    if (successor == predecessor && successor == n.Me) {
+    if (predecessor == "" && successor == n.Me) {
         // TODO: dump database
     } else {
         // Copy all keys and Dict3 triplets from node to successor        
