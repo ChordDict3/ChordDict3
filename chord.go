@@ -269,7 +269,7 @@ func (node *ChordNode)transfer_keys_on_shutdown(req *Request, encoder *json.Enco
 
 func (node *ChordNode)transfer_keys_on_join(req *Request, encoder *json.Encoder) {
     fmt.Println("entered transfer_keys_on_join")
-    forwarded_hashID := uint64(req.Params.(float64))
+    forwarded_hashID, _ := strconv.ParseUint(req.Params.(string), 16, 64)  // 16 is base repr. of string, 64 is uint size
     
     return_triplets := make([]interface{}, 0)
     triplets := node.Dict3
@@ -347,7 +347,7 @@ func (node *ChordNode)join(netAddr string) {
         return
     }
     
-    m = Request{"transfer_keys_on_join", node.HashID}
+    m = Request{"transfer_keys_on_join", strconv.FormatUint(node.HashID, 16)} //16 means 'hex'
     successor_encoder.Encode(m)
     res = new(Response)
     successor_decoder.Decode(&res)
@@ -509,7 +509,7 @@ func (node *ChordNode)updateTripletValue(docId int, key string, rel string, val 
 
 func (node *ChordNode)successor_of_hash_rpc(req *Request, encoder *json.Encoder) {
 	fmt.Println("in succ of hash")
-	hash := uint64(req.Params.(float64))
+	hash, _ := strconv.ParseUint(req.Params.(string), 16, 64)  // 16 is base repr. of string, 64 is uint size
 	retval := ""
 	if (hash == generateNodeHash(node.Me, node.M)) {
 		retval = node.Me
@@ -530,7 +530,7 @@ func (node *ChordNode)successor_of_hash_rpc(req *Request, encoder *json.Encoder)
             os.Exit(1)
             return
         }
-        m := Request{"successor_of_hash_rpc", hash}
+        m := Request{"successor_of_hash_rpc", strconv.FormatUint(hash, 16)} // 16 means 'hex'
         encoder2.Encode(m)
         res := new(Response)
         decoder2.Decode(&res)
@@ -554,7 +554,7 @@ func (node *ChordNode)fix_fingers() {
 		} else if (node.Me != node.Successor) {
 			encoder, decoder := createConnection(node.Successor)
             if (encoder != nil && decoder != nil) { // We can fix_fingers later if shutdown is currently happening
-                m := Request{"successor_of_hash_rpc", start}
+                m := Request{"successor_of_hash_rpc", strconv.FormatUint(start, 16)} // 16 means 'hex'
                 encoder.Encode(m)
                 res := new(Response)
                 decoder.Decode(&res)
@@ -1260,10 +1260,10 @@ func main() {
 	go func() {
 		for t := range ticker.C {
 			node.stabilize()
-			//fmt.Println("node identifier: "+node.Me)
-			//fmt.Println("node successor: "+node.Successor)
-			//fmt.Println("node predecessor: "+node.Predecessor)
-			//fmt.Println("node hashID: ", node.HashID)
+			fmt.Println("node identifier: "+node.Me)
+			fmt.Println("node successor: "+node.Successor)
+			fmt.Println("node predecessor: "+node.Predecessor)
+			fmt.Println("node hashID: ", node.HashID)
 
 			_ = t
 		}
