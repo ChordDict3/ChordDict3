@@ -18,18 +18,13 @@ import (
 	"strconv"
 )
 
-
 type ChordNode struct{
-	Me string
-	IP string
-	Port int
+	Me, Successor, Predecessor string
+	FingerTable []string
 	HashID uint64
-	Successor string
-	Predecessor string
-	Fingers []string
 	M uint64 
 	Dict3 *db.Col
-	//Keys []uint64
+	Keys []uint64
 }
 
 type Request struct{
@@ -63,6 +58,9 @@ type DictValue struct {
 	Permission string
 }
 
+//////////////////
+//HELPER FUNCTIONS
+//////////////////
 //create connection to other nodes
 func createConnection(netAddr string) (encoder *json.Encoder, decoder *json.Decoder){
 	fmt.Println("Creating connection to ", netAddr)
@@ -70,6 +68,7 @@ func createConnection(netAddr string) (encoder *json.Encoder, decoder *json.Deco
 
 	if err != nil {
 		fmt.Println("Connection error", err)
+        return nil, nil
 	}
 	e := json.NewEncoder(conn)
 	d := json.NewDecoder(conn)
@@ -140,10 +139,9 @@ func makeDictValue(content interface{}, permission string) DictValue {
 	return dictVal
 }
 
-//CHORD FUNCTIONS
-//create a new chord ring
 func create(config Configuration) *ChordNode{
-	netAddr := config.IpAddress + ":" + config.Port
+    port := config.Port
+	netAddr := config.IpAddress + ":" + port
 	hash := generateNodeHash(netAddr, config.M)
 	
 	myDBDir := config.PersistentStorageContainer.File
@@ -152,30 +150,32 @@ func create(config Configuration) *ChordNode{
 	if err != nil {
 		panic(err)
 	}
-	dbName := "Triplets"+config.Port
+	dbName := "Triplets"+port
 	if err := myDB.Create(dbName); err != nil {
 		//ignoring this error?
 		//panic(err)
 	}	
 	triplets := myDB.Use(dbName)
 	// Create indexes here??
-	// TODO: Do not create index if it already exists?
-	if err := triplets.Index([]string{"key"}); err != nil {
-		//ignoring?
-		//panic(err)
-	}
-	if err := triplets.Index([]string{"rel"}); err != nil {
-		//ignoring?
-		//panic(err)
-	}
+	// TODO: Do not create index if it already exists? --- the Index function already handles this
+    if err := triplets.Index([]string{"hash"}); err != nil {
+        panic(err)
+    }
+    if err := triplets.Index([]string{"key"}); err != nil {
+        panic(err)
+    }
+    if err := triplets.Index([]string{"rel"}); err != nil {
+        panic(err)
+    }
 	c := ChordNode{
 		Me: netAddr,
 		Successor: "",
 		Predecessor: "",
-		Fingers: make([]string, 3),
+		FingerTable: make([]string, config.M),
 		HashID: hash,
 		M: config.M,
 		Dict3: triplets,
+        Keys: make([]uint64, 0),
 	}
 	return &c
 }
@@ -248,7 +248,70 @@ func (node *ChordNode)set_successor(req *Request, encoder *json.Encoder){
 	return
 }
 
-func (node *ChordNode)get_successor_of_hash(hash uint64) string {
+func (node *ChordNode)transfer_keys_on_shutdown(req *Request, encoder *json.Encoder) {    
+    fmt.Println("entered transfer_keys_on_shutdown")
+    forwarded_triplets := req.Params.([]interface{})
+    
+    triplets := node.Dict3
+    
+    for _, t := range forwarded_triplets {
+        triplet := t.(map[string]interface{})
+        keyRelHash := uint64(triplet["hash"].(float64))
+        _, err := triplets.Insert(map[string]interface{}{
+            "hash": keyRelHash,
+            "key": triplet["key"].(string),
+            "rel": triplet["rel"].(string),
+            "val": triplet["val"].(map[string]interface{})})
+        if err != nil {
+            panic(err)
+        }
+        node.Keys = append(node.Keys, keyRelHash)
+    }
+    
+    m := Response{"Success", nil}
+    encoder.Encode(m)
+    return
+}
+
+func (node *ChordNode)transfer_keys_on_join(req *Request, encoder *json.Encoder) {
+    fmt.Println("entered transfer_keys_on_join")
+    forwarded_hashID := uint64(req.Params.(float64))
+    
+    return_triplets := make([]interface{}, 0)
+    triplets := node.Dict3
+    
+    // Loop through successor keys and check if key# <= node#
+    for _, value := range node.Keys {
+        if (value <= forwarded_hashID) {
+            queryResult := query_hash(value, triplets)
+            if len(queryResult) != 0 {
+                for i := range queryResult {
+                    readBack, err := triplets.Read(i)
+                    if err != nil {
+                        panic(err)
+                    }
+                    if err := triplets.Delete(i); err != nil {
+                        panic(err)
+                    }
+                    return_triplets = append(return_triplets, readBack)
+                }
+                
+                // Delete hash from successor's Keys
+                keyRelHashIndex := node.find_key(value)
+                if (keyRelHashIndex > -1) {
+                    node.Keys = append(node.Keys[:keyRelHashIndex], node.Keys[keyRelHashIndex+1:]...)
+                }
+            }
+        }
+    }
+    
+    // Return the Dict3 values and Keys to the node joining the ring
+    res := Response{return_triplets, nil}
+    encoder.Encode(res)
+    return
+}
+
+func (node *ChordNode)successor_of_hash(hash uint64) string {
 	if (inChordRange(hash, generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Me, node.M), node.M)) {
 		return node.Me
 	} else if (inChordRange(hash, generateNodeHash(node.Me, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
@@ -257,25 +320,62 @@ func (node *ChordNode)get_successor_of_hash(hash uint64) string {
 		return node.Successor
 	}
 }
-
+/*
 func (node *ChordNode) create() error {
 	node.Predecessor = ""
 	node.Successor = node.Me
 	return nil
 }
-
+*/
 //join an existing chord ring containing node with identifier
 func (node *ChordNode)join(netAddr string) {
 	fmt.Println("entered join")
 	node.Predecessor = ""
 
 	encoder, decoder := createConnection(netAddr)
-	m := Request{"find_successor", node.Me}
-	encoder.Encode(m)
-	res := new(Response)
-	decoder.Decode(&res)
-	node.Successor = res.Result.(string)
-	//TODO: ask successor for all DICT3 data we should take from him
+    if (encoder == nil && decoder == nil) { // Something went wrong
+        fmt.Println("Join failed because Chord node with network address " + netAddr + " does not exist.")
+        os.Exit(1)
+        return
+    }
+    
+    m := Request{"find_successor", node.Me}
+    encoder.Encode(m)
+    res := new(Response)
+    decoder.Decode(&res)
+    node.Successor = res.Result.(string)
+    
+	// Ask successor for all DICT3 data we should take from him
+    successor_encoder, successor_decoder := createConnection(node.Successor)
+    if (successor_encoder == nil && successor_decoder == nil) { // Something went wrong
+        fmt.Println("Could not connect to current node's successor to take necessary keys and Dict3 data.")
+        os.Exit(1)
+        return
+    }
+    
+    m = Request{"transfer_keys_on_join", node.HashID}
+    successor_encoder.Encode(m)
+    res = new(Response)
+    successor_decoder.Decode(&res)
+
+    returned_triplets := res.Result.([]interface{})
+    triplets := node.Dict3
+    
+    for _, t := range returned_triplets {
+        triplet := t.(map[string]interface{})
+        keyRelHash := uint64(triplet["hash"].(float64))
+        _, err := triplets.Insert(map[string]interface{}{
+            "hash": keyRelHash,
+            "key": triplet["key"].(string),
+            "rel": triplet["rel"].(string),
+            "val": triplet["val"].(map[string]interface{})})
+        if err != nil {
+            panic(err)
+        }
+        node.Keys = append(node.Keys, keyRelHash)
+    }
+    
+    return
 }
 
 //find the immediate successor of node with given identifier
@@ -290,12 +390,18 @@ func (node *ChordNode)find_successor(req *Request, encoder *json.Encoder) {
 		encoder.Encode(res)
 	} else {
 		//find closest finger and forward request there; for now just forward around ring
-		encoder2, decoder2 := createConnection(node.Successor)
-		m := Request{"successor_of_hash", netAddr}
-		encoder2.Encode(m)
-		res := new(Response)
-		decoder2.Decode(&res)
-		encoder.Encode(res) 
+		encoder2, decoder2 := createConnection(node.Successor) //change to closest finger
+        if (encoder2 == nil && decoder2 == nil) { // Something went wrong
+            fmt.Println("Could not connect to the current node's successor to find its successor.")
+            os.Exit(1)
+            return
+        }
+        fmt.Println("Looking for successor")
+        m := Request{"find_successor", netAddr}
+        encoder2.Encode(m)
+        res := new(Response)
+        decoder2.Decode(&res)
+        encoder.Encode(res)
 	}
 }
 
@@ -305,55 +411,61 @@ func (node *ChordNode)find_successor(req *Request, encoder *json.Encoder) {
 func (node *ChordNode)stabilize() {
 	//verify immediate successor; tell successor about itself
 	encoder, decoder := createConnection(node.Successor)
-	m := Request{"get_predecessor", ""}
-	encoder.Encode(m)
-	res := new(Response)
-	decoder.Decode(&res)
-	successors_predecessor := res.Result.(string)
-	if (successors_predecessor == "") {
-		//successor has no predecesor; we should be the predecessor - there are only 2 nodes
-		m = Request{"set_predecessor", node.Me}
-		encoder.Encode(m)
-	} else if (node.Successor == node.Me) {
-		//successor is set to myself; 2 nodes and this was first node
-		node.Successor = successors_predecessor
-	}else if(inChordRange(generateNodeHash(successors_predecessor, node.M), generateNodeHash(node.Me, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
-		fmt.Println("stabilize: in chord range")
-		node.Successor = successors_predecessor		
-	} 
-	if(node.Me != node.Successor) {	
-		fmt.Println("going to notify ", node.Successor, "that ", node.Me, "should be his predecesor")	
-		encoder, decoder = createConnection(node.Successor)
-		m = Request{"notify", node.Me}
-		encoder.Encode(m)
-	} else if (inChordRange(generateNodeHash(node.Me, node.M), generateNodeHash(successors_predecessor, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
-		// me < succ_pred < succ; successor's predecessor should be my successor
-		if(node.Me != node.Successor) {	
-			fmt.Println("going to notify ", node.Successor, "that ", node.Me, "should be his predecesor")	
-			encoder, decoder = createConnection(node.Successor)
-			m = Request{"notify", node.Me}
-			encoder.Encode(m)
-		}
-	}	
+    if (encoder != nil && decoder != nil) { // If either of these are nil because of shutdown, we can just stabilize later
+        m := Request{"get_predecessor", ""}
+        encoder.Encode(m)
+        res := new(Response)
+        decoder.Decode(&res)
+        successors_predecessor := res.Result.(string)
+        if (successors_predecessor == "") {
+            //successor has no predecesor; we should be the predecessor - there are only 2 nodes
+            m = Request{"set_predecessor", node.Me}
+            encoder.Encode(m)
+        } else if (node.Successor == node.Me) {
+            //successor is set to myself; 2 nodes and this was first node
+            node.Successor = successors_predecessor
+        }else if(inChordRange(generateNodeHash(successors_predecessor, node.M), generateNodeHash(node.Me, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
+            fmt.Println("stabilize: in chord range")
+            node.Successor = successors_predecessor		
+        } 
+        if(node.Me != node.Successor) {	
+            fmt.Println("going to notify ", node.Successor, "that ", node.Me, "should be his predecesor")	
+            encoder, decoder = createConnection(node.Successor)
+            if (encoder != nil && decoder != nil) { // We can stabilize this later if shutdown is currently happening
+                m = Request{"notify", node.Me}
+                encoder.Encode(m)
+            }
+        } else if (inChordRange(generateNodeHash(node.Me, node.M), generateNodeHash(successors_predecessor, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
+            // me < succ_pred < succ; successor's predecessor should be my successor
+            if(node.Me != node.Successor) {	
+                fmt.Println("going to notify ", node.Successor, "that ", node.Me, "should be his predecesor")	
+                encoder, decoder = createConnection(node.Successor)
+                if (encoder != nil && decoder != nil) { // We can stabilize this later if shutdown is currently happening
+                    m = Request{"notify", node.Me}
+                    encoder.Encode(m)
+                }
+            }
+        }
+    }
 }
 
-//check if identifier should be this node's predecessor
+//check if netAddr should be this node's predecessor
 func (node *ChordNode)notify(req *Request, encoder *json.Encoder) {
-	identifier := req.Params.(string)
+	netAddr := req.Params.(string)
 	if (node.Predecessor == "") { 
-	//node has no predecessor, set identifier as node's predecessor
-		node.Predecessor = identifier
-		//res := Response{identifier, nil}
-		//encoder.Encode(res)
-	} else if (inChordRange(generateNodeHash(identifier, node.M), generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Me, node.M), node.M)) { 
-	//predecessor < identifier < node; ID should be pred
-		node.Predecessor = identifier
-		//res := Response{identifier, nil}
-		//encoder.Encode(res)
+	//node has no predecessor, set netAddr as node's predecessor
+		node.Predecessor = netAddr
+		res := Response{netAddr, nil}
+		encoder.Encode(res)
+	} else if (inChordRange(generateNodeHash(netAddr, node.M), generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Me, node.M), node.M)) { 
+	//predecessor < netAddr < node; ID should be pred
+		node.Predecessor = netAddr
+		res := Response{netAddr, nil}
+		encoder.Encode(res)
 	} else { 
 	//node's predecessor was already correct
-		//res := Response{node.Predecessor, nil}
-		//encoder.Encode(res)
+		res := Response{node.Predecessor, nil}
+		encoder.Encode(res)
 	}
 }
 
@@ -383,8 +495,10 @@ func readConfig()(config *Configuration){
 //////
 // Dict functions
 //////
-func insertValueIntoTriplets(key string, rel string, val map[string]interface{}, triplets *db.Col) {
+func (node *ChordNode)insertValueIntoTriplets(key string, rel string, val map[string]interface{}) {
+	triplets := node.Dict3
 	_, err := triplets.Insert(map[string]interface{}{
+		"hash": generateKeyRelHash(key, rel, node.M)
 		"key": key,
 		"rel": rel,
 		"val": val})
@@ -393,8 +507,9 @@ func insertValueIntoTriplets(key string, rel string, val map[string]interface{},
 	}
 }
 
-func updateTripletValue(docId int, key string, rel string, val map[string]interface{}, triplets *db.Col) {
+func updateTripletValue(docId int, hash uint64, key string, rel string, val map[string]interface{}, triplets *db.Col) {
 	err := triplets.Update(docId, map[string]interface{} {
+		"hash": hash,
 		"key": key,
 		"rel": rel,
 		"val": val})
@@ -403,7 +518,7 @@ func updateTripletValue(docId int, key string, rel string, val map[string]interf
 	}
 }
 
-func (node *ChordNode)successor_of_hash(req *Request, encoder *json.Encoder) {
+func (node *ChordNode)successor_of_hash_rpc(req *Request, encoder *json.Encoder) {
 	fmt.Println("in succ of hash")
 	hash := uint64(req.Params.(float64))
 	retval := ""
@@ -418,13 +533,20 @@ func (node *ChordNode)successor_of_hash(req *Request, encoder *json.Encoder) {
 		res := Response{retval, nil}
 		encoder.Encode(res)
 	} else {
-		encoder2, decoder2 := createConnection(node.Successor)
-		m := Request{"successor_of_hash", hash}
-		encoder2.Encode(m)
-		res := new(Response)
-		decoder2.Decode(&res)
-		fmt.Println("successor of hash is: ", res.Result.(string))
-		encoder.Encode(res)
+		//encoder2, decoder2 := createConnection(node.Successor) //should change this to closest finger
+		closest_preceding_node := node.closest_preceding_node(hash)
+		encoder2, decoder2 := createConnection(closest_preceding_node)
+        if (encoder2 == nil && decoder2 == nil) { // Something went wrong
+            fmt.Println("Could not connect to the current node's successor to get its successor of hash via RPC.")
+            os.Exit(1)
+            return
+        }
+        m := Request{"successor_of_hash_rpc", hash}
+        encoder2.Encode(m)
+        res := new(Response)
+        decoder2.Decode(&res)
+        fmt.Println("successor of hash is: ", res.Result.(string))
+        encoder.Encode(res)
 	}
 }
 
@@ -435,34 +557,30 @@ func (node *ChordNode)fix_fingers() {
 	fmt.Println("fix fingers")
 	index := 0
 	for i := uint64(0); i < node.M; i++ {
-		fmt.Println("iteration: ", i+1)
 		start := uint64((node.HashID + powerof(2,i)) % powerof(2,node.M))
-		fmt.Println("finger should be: ", start)
+		
 		if(inChordRange(start, generateNodeHash(node.Me, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
-			fmt.Println("in chord range")
 			finger_value = node.Successor
 		} else if(inChordRange(start, generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Me, node.M), node.M)) {
-			fmt.Println("i'm my finger")
 			finger_value = node.Me
 		} else if (node.Me != node.Successor) {
 			encoder, decoder := createConnection(node.Successor)
-			fmt.Println("making request... with ", start)
-			m := Request{"successor_of_hash", start}
-			encoder.Encode(m)
-			res := new(Response)
-			decoder.Decode(&res)
-			finger_value = res.Result.(string)
+            if (encoder != nil && decoder != nil) { // We can fix_fingers later if shutdown is currently happening
+                m := Request{"successor_of_hash_rpc", start}
+                encoder.Encode(m)
+                res := new(Response)
+                decoder.Decode(&res)
+                finger_value = res.Result.(string)
+            } else {
+                return
+            }
 		} else {
-			fmt.Println("we're our finger")
 			finger_value = node.Me
 		}
-		node.Fingers[index] = finger_value
+		node.FingerTable[index] = finger_value
 		index++
 	}
 }
-
-//not relevant; won't have node failures. can be set on node shutdown
-//func check_predecessor()
 
 func query_key(key string, triplets *db.Col)  []map[string]interface{}{
 
@@ -486,9 +604,10 @@ func query_key(key string, triplets *db.Col)  []map[string]interface{}{
 			
 			val := readBack["val"].(map[string]interface{})
 			rel := readBack["rel"].(string)
+			h := readBack["hash"].(uint64)
 			//update with new Accessed time
 			val["Accessed"] = time.Now().Unix()
-			updateTripletValue(i, key, rel, val, triplets)
+			updateTripletValue(i, h, key, rel, val, triplets)
 			
 			resultList = append(resultList, val)
 		}
@@ -518,9 +637,10 @@ func query_rel(rel string, triplets *db.Col) []map[string]interface{}{
 			
 			val := readBack["val"].(map[string]interface{})
 			key := readBack["key"].(string)
+			h := readBack["hash"].(uint64)
 			//update with new Accessed time
 			val["Accessed"] = time.Now().Unix()
-			updateTripletValue(i, key, rel, val, triplets)
+			updateTripletValue(i, h, key, rel, val, triplets)
 			
 			resultList = append(resultList, val)
 		}
@@ -543,6 +663,42 @@ func query_key_rel(key string, rel string, triplets *db.Col) (queryResult map[in
 	}
 
 	return q_result
+}
+
+func query_hash(hash uint64, triplets *db.Col) (queryResult map[int]struct{}) {
+
+    var query interface{}
+
+	json.Unmarshal([]byte(`{"eq": hash, "in": ["hash"]}`), &query)
+
+	q_result := make(map[int]struct{}) // query result (document IDs) goes into map keys
+
+	if err := db.EvalQuery(query, triplets, &q_result); err != nil {
+		panic(err)
+	}
+
+	return q_result
+}
+
+func (node *ChordNode)closest_preceding_node(hash uint64) string {
+	for i := uint64(1); i < node.M; i++ {
+		if(node.FingerTable[i-1] != "" && node.FingerTable[i] != "") {
+			if(inChordRange(hash, generateNodeHash(node.FingerTable[i-1], node.M), generateNodeHash(node.FingerTable[i], node.M), node.M)) {
+				return node.FingerTable[i-1]
+			}
+		}
+	}
+	//no finger was closest; return self
+	return node.Me
+}
+
+func (node *ChordNode) find_key(key uint64) int {
+    for index, value := range node.Keys {
+        if (value == key) {
+            return index
+        }
+    }
+    return -1
 }
 
 func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
@@ -571,7 +727,8 @@ func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
 				val := readBack["val"].(map[string]interface{})
 				//update with new Accessed time
 				val["Accessed"] = time.Now().Unix()
-				updateTripletValue(i, key, rel, val, triplets)
+				h := readBack["hash"].(uint64)
+				updateTripletValue(i, h, key, rel, val, triplets)
 				//send response
 				m := Response{val, nil}
 				encoder.Encode(m)
@@ -623,7 +780,7 @@ func (n *ChordNode)lookup_keyonly(req *Request, encoder *json.Encoder) {
 		forwardEncoder.Encode(req)
 		forwardedResponse := new(Response)
 		decoder.Decode(&forwardedResponse)
-		
+
 		//add response to result list
 		forwardedResults := forwardedResponse.Result
 		fArr := forwardedResults.([]interface{})
@@ -769,7 +926,6 @@ func (n *ChordNode)lookup_relonly_internal(req *Request, encoder *json.Encoder) 
 //needs a time to purge 'older than' entries
 //key:nil rel:nil value: date to purge after
 //sample date "2015-05-08T16:55:55.326107309-04:00"
-
 func (n *ChordNode)purge(req *Request, encoder *json.Encoder){
 
 	fmt.Println("entering purge")
@@ -821,6 +977,12 @@ func (n *ChordNode)purge(req *Request, encoder *json.Encoder){
 			if err := triplets.Delete(purge_list[i]); err != nil {
 				panic(err)
 			}
+            
+            // Delete hash from node's Keys
+            keyRelHashIndex := n.find_key(readBack["hash"].(uint64))
+            if (keyRelHashIndex > -1) {
+                n.Keys = append(n.Keys[:keyRelHashIndex], n.Keys[keyRelHashIndex+1:]...)
+            }
 		}
 	}
 }
@@ -885,8 +1047,14 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 	// get successor; if Me, then insert into DB, else forward
 	successor := n.get_successor_of_hash(keyRelHash)
 	fmt.Println("successor: " + successor)
+    
 	if (successor != n.Me) {
-		forwardEncoder, decoder := createConnection(successor)
+        forwardEncoder, decoder := createConnection(successor)
+        if (forwardEncoder == nil && decoder == nil) { // Something went wrong
+            fmt.Println("Could not connect to the current node's successor to insert data.")
+            os.Exit(1)
+            return
+        }
 		forwardEncoder.Encode(req)
 		resp := new(Response)
 		decoder.Decode(&resp)
@@ -915,7 +1083,8 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 					now := time.Now().Unix()
 					dictVal["Accessed"] = now
 					dictVal["Modified"] = now
-					updateTripletValue(i, key, rel, dictVal, triplets)
+					h := readBack["hash"].(uint64)
+					updateTripletValue(i, h, key, rel, dictVal, triplets)
 				}
 			} else {
 				// insert() fails if key/rel already exists
@@ -925,9 +1094,11 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 		} else {
 			dictVal := makeDictValue(val, perms)
 			_, err := triplets.Insert(map[string]interface{}{
+                "hash": keyRelHash,
 				"key": key,
 				"rel": rel,
 				"val": dictVal})
+            n.Keys = append(n.Keys, keyRelHash)
 			if err != nil {
 				panic(err)
 			}
@@ -942,6 +1113,99 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 	}
 }
 
+func (n *ChordNode)shutdown(req *Request, encoder *json.Encoder) {
+    // Get the node's hash ID
+    //hashID := n.HashID
+    // Set the hash ID to something unreachable
+    n.HashID = powerof(2, n.M) + 1
+    
+    // Get the node's predecessor
+    predecessor := n.Predecessor
+    // Set the node's predecessor to nothing
+    n.Predecessor = ""
+    
+    // Get the node's successor
+    successor := n.Successor
+    // Set the node's successor to nothing
+    n.Successor = ""
+    
+    // If this is the only node in the ring
+    if (successor == predecessor && successor == n.Me) {
+        // TODO: dump database
+    } else {
+        // Copy all keys and Dict3 triplets from node to successor        
+        successor_triplets := make([]interface{}, 0)
+        triplets := n.Dict3
+        for _, value := range n.Keys {
+            queryResult := query_hash(value, triplets)
+            if len(queryResult) != 0 {
+                for i := range queryResult {
+                    readBack, err := triplets.Read(i)
+                    if err != nil {
+                        panic(err)
+                    }
+                    if err := triplets.Delete(i); err != nil {
+                        panic(err)
+                    }
+                    successor_triplets = append(successor_triplets, readBack)
+                }
+            }
+        }
+        successor_encoder, successor_decoder := createConnection(successor)
+        if (successor_encoder == nil && successor_decoder == nil) { // Something went wrong
+            fmt.Println("Could not connect to the current node's successor to transfer keys and Dict3 data.")
+            os.Exit(1)
+            return
+        }
+        
+        m := Request{"transfer_keys_on_shutdown", successor_triplets}
+        successor_encoder.Encode(m)
+        res := new(Response)
+        successor_decoder.Decode(&res)
+        
+        // Set predecessor's successor to current node's successor
+        predecessor_encoder, predecessor_decoder := createConnection(predecessor)
+        if (predecessor_encoder == nil && predecessor_decoder == nil) { // Something went wrong
+            fmt.Println("Could not connect to the current node's predecessor to reset its successor.")
+            os.Exit(1)
+            return
+        }
+        m = Request{"set_successor", successor}
+        predecessor_encoder.Encode(m)
+        res = new(Response)
+        predecessor_decoder.Decode(&res)
+        
+        // Set successor's predecessor to current node's predecessor
+        successor_encoder, successor_decoder = createConnection(successor)
+        if (successor_encoder == nil && successor_decoder == nil) { // Something went wrong
+            fmt.Println("Could not connect to the current node's successor to reset its predecessor.")
+            os.Exit(1)
+            return
+        }
+        m = Request{"notify", predecessor}
+        successor_encoder.Encode(m)
+        res = new(Response)
+        successor_decoder.Decode(&res)
+        
+        // Tell the successor to fix its fingers
+        successor_encoder, successor_decoder = createConnection(successor)
+        if (successor_encoder == nil && successor_decoder == nil) { // Something went wrong
+            fmt.Println("Could not connect to the current node's successor to fix finger table.")
+            os.Exit(1)
+            return
+        }
+        m = Request{"fix_fingers", nil}
+        successor_encoder.Encode(m)
+        res = new(Response)
+        successor_decoder.Decode(&res)
+    }
+    
+	n.Keys = make([]uint64, 0)
+    os.Exit(0)
+    return
+}
+
+
 //////
 // Handle incoming requests for RPCs
 //////
@@ -952,10 +1216,12 @@ func handleConnection(node *ChordNode, conn net.Conn){
 	decoder.Decode(&req)
 
 	switch(req.Method) {
+    case "transfer_keys_on_shutdown" :
+        node.transfer_keys_on_shutdown(req, encoder)
+    case "transfer_keys_on_join" :
+        node.transfer_keys_on_join(req, encoder)
 	case "find_successor" :
 		node.find_successor(req, encoder)
-	//case "find_predecessor" :
-	//	find_predecessor(req, encoder)
 	case "get_successor" :
 		node.get_successor(req, encoder)
 	case "get_predecessor" :
@@ -964,10 +1230,13 @@ func handleConnection(node *ChordNode, conn net.Conn){
 		node.set_successor(req, encoder)
 	case "set_predecessor" :
 		node.set_predecessor(req, encoder)
-	//case "update_finger_table" :
-		//node.update_finger_table(node, req, encoder)
 	case "notify" :
 		node.notify(req, encoder)
+    case "successor_of_hash_rpc" :
+        node.successor_of_hash_rpc(req, encoder)
+    case "fix_fingers" :
+        node.fix_fingers()
+        encoder.Encode(Response{nil, nil})
 	case "lookup" :
 		node.lookup(req, encoder)
 	case "lookup_keyonly_internal" :
@@ -982,6 +1251,8 @@ func handleConnection(node *ChordNode, conn net.Conn){
 		node.delete(req, encoder)
 	case "purge" :
 		node.purge(req, encoder)
+    case "shutdown" :
+        node.shutdown(req, encoder)
 	}
 }
 
@@ -1024,19 +1295,19 @@ func main() {
 			_ = t
 		}
 	}()
-/*
+
 	ticker2 := time.NewTicker(time.Millisecond * 20000)
 	go func() {
 		for t2 := range ticker2.C {
 			node.fix_fingers()
-			fmt.Println("fingers[0]: ", node.Fingers[0])
-			fmt.Println("fingers[1]: ", node.Fingers[1])
-			fmt.Println("fingers[2]: ", node.Fingers[2])
+			fmt.Println("fingertable[0]: ", node.FingerTable[0])
+			fmt.Println("fingertable[1]: ", node.FingerTable[1])
+			fmt.Println("fingertable[2]: ", node.FingerTable[2])
 
 			_ = t2
 		}
 	}()
-*/
+
     //Listen for a connection
     for {
     	conn, err := l.Accept() // this blocks until connection or error
