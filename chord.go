@@ -524,7 +524,7 @@ func (node *ChordNode)notify(req *Request, encoder *json.Encoder) {
 	if (node.Predecessor == "") { 
 	//node has no predecessor, set netAddr as node's predecessor
 		node.Predecessor = netAddr
-	//	res := Response{netAddr, nil}
+    //  res := Response{netAddr, nil}
 	//	encoder.Encode(res)
 	} else if (inChordRange(generateNodeHash(netAddr, node.M), generateNodeHash(node.Predecessor, node.M), generateNodeHash(node.Me, node.M), node.M)) { 
 	//predecessor < netAddr < node; ID should be pred
@@ -1467,7 +1467,7 @@ func main() {
 		}
 	}()
 
-	ticker2 := time.NewTicker(time.Millisecond * 5000)
+	ticker2 := time.NewTicker(time.Millisecond * 8000)
 	go func() {
 		for t2 := range ticker2.C {
 			node.fix_fingers()
