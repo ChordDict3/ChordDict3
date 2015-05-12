@@ -802,10 +802,18 @@ func (n *ChordNode)listids(req *Request, encoder *json.Encoder) {
 
 func (n *ChordNode)listkeys(req *Request, encoder *json.Encoder) {
 	fmt.Println("entering listkeys")
+	
+	method := req.Method
+	if (method == "listkeys_internal") {
+		fmt.Println(req)
+		if (req.Params.(string) == n.Me) {
+			encoder.Encode(Response{nil, nil})
+			return
+		}
+	}
 
 	triplets := n.Dict3
-	
-	
+
 	var query interface{}
 	json.Unmarshal([]byte(`{"n": [{"has": ["key"]}, {"has": ["rel"]}]}`), &query)
 
@@ -828,14 +836,30 @@ func (n *ChordNode)listkeys(req *Request, encoder *json.Encoder) {
 	}
 	fmt.Println(key_set)
 	
-	val := make([]string, 0)
+	resultList := make([]string, 0)
 	for i := range key_set{
-		val = append(val,i)
+		resultList = append(resultList,i)
 	}
 	
-	m := Response{val, nil}
+	fwdReq := req
+	if method != "listkeys_internal" {
+		fwdReq = &Request{"listkeys_internal", n.Me}
+	}
+	fwdEnc, fwdDec := createConnection(n.Successor)
+	fwdEnc.Encode(fwdReq)
+	fwdResp := new(Response)
+	fwdDec.Decode(&fwdResp)
+	
+	forwardedResults := fwdResp.Result
+	if (forwardedResults != nil) {
+		fArr := forwardedResults.([]interface{})
+		for _, result := range fArr {
+			resultList = append(resultList, result.(string))
+		}
+	}
+	
+	m := Response{resultList, nil}
 	encoder.Encode(m)
-
 }
 
 func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
@@ -1357,6 +1381,8 @@ func handleConnection(node *ChordNode, conn net.Conn){
 	case "delete" :
 		node.delete(req, encoder)
 	case "listkeys" :
+		node.listkeys(req, encoder)
+	case "listkeys_internal" :
 		node.listkeys(req, encoder)
 	case "listids" :
 		node.listids(req, encoder)
