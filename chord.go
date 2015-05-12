@@ -1,6 +1,3 @@
-//resource: https://cit.dixie.edu/cs/3410/asst_chord.html - from another CS course;
-//			spec for a similar chord project with helpful suggestions
-
 package main
 
 import (
@@ -378,7 +375,7 @@ func (node *ChordNode)get_successor_of_hash(hash uint64) string {
 	} else if (inChordRange(hash, generateNodeHash(node.Me, node.M), generateNodeHash(node.Successor, node.M), node.M)) {
 		return node.Successor
 	} else {
-		return node.Successor
+		return node.closest_preceding_node(hash)
 	}
 }
 
