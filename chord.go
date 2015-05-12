@@ -1190,18 +1190,25 @@ func (n *ChordNode)delete(req *Request, encoder *json.Encoder){
                 if (keyRelHashIndex > -1) {
                     n.Keys = append(n.Keys[:keyRelHashIndex], n.Keys[keyRelHashIndex+1:]...)
                 }
+				encoder.Encode(Response{true, nil})
+			} else {
+				encoder.Encode(Response{false, nil})
 			}
 		}
 	} else {
 		keyRelHash := generateKeyRelHash(key, rel, n.M)
 		//find closest successor/finger node for keyRelHash
 		successor := n.get_successor_of_hash(keyRelHash)
-		//forward request to successor
-		forwardEncoder, decoder := createConnection(successor)
-		forwardEncoder.Encode(req)
-		resp := new(Response)
-		decoder.Decode(&resp)
-		encoder.Encode(resp)
+		if (successor != n.Me) {
+			//forward request to successor
+			forwardEncoder, decoder := createConnection(successor)
+			forwardEncoder.Encode(req)
+			resp := new(Response)
+			decoder.Decode(&resp)
+			encoder.Encode(resp)
+		} else {
+			encoder.Encode(Response{nil, nil})
+		}
 	}	
 }
 
