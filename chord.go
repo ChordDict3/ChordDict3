@@ -760,6 +760,46 @@ func (node *ChordNode) find_key(key uint64) int {
     return -1
 }
 
+func (n *ChordNode)listids(req *Request, encoder *json.Encoder) {
+	fmt.Println("entering listids")
+
+	triplets := n.Dict3
+	
+	var query interface{}
+	json.Unmarshal([]byte(`{"n": [{"has": ["key"]}, {"has": ["rel"]}]}`), &query)
+	//json.Unmarshal([]byte(`{"eq": "keyA", "in": ["key"]}`), &query)
+	queryResult := make(map[int]struct{}) // query result (document IDs) goes into map keys
+
+	if err := db.EvalQuery(query, triplets, &queryResult); err != nil {
+		panic(err)
+	}
+
+	//fmt.Println(queryResult)
+
+	id_set := make(map[[2]string]bool)
+	// Query result are document IDs
+	for id := range queryResult {
+
+		readBack, err := triplets.Read(id)
+		if err != nil {
+			panic(err)
+		}
+		//fmt.Println(readBack)
+		id_set[[2]string{readBack["key"].(string), readBack["rel"].(string)}] = true 
+	}
+
+	val := make([]interface{}, 0)
+	for i := range id_set{
+		//fmt.Println(i)
+		val = append(val, i)
+	}
+		
+	m := Response{val, nil}
+	encoder.Encode(m)
+	
+
+}
+
 func (n *ChordNode)listkeys(req *Request, encoder *json.Encoder) {
 	fmt.Println("entering listkeys")
 
@@ -1323,7 +1363,7 @@ func handleConnection(node *ChordNode, conn net.Conn){
 	case "listkeys" :
 		node.listkeys(req, encoder)
 	case "listids" :
-		node.listkeys(req, encoder)
+		node.listids(req, encoder)
 	case "shutdown" :
 		node.shutdown(req, encoder)
 	}
