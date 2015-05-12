@@ -1,1 +1,1 @@
-{"method": "purge", "params": ["keyB","relB","2431131322"]}
+{"method": "insert", "params": ["keyB","relB","hello"]}
