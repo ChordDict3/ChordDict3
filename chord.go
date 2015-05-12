@@ -333,14 +333,16 @@ func (node *ChordNode)transfer_keys_on_shutdown(req *Request, encoder *json.Enco
 
 func (node *ChordNode)transfer_keys_on_join(req *Request, encoder *json.Encoder) {
     fmt.Println("entered transfer_keys_on_join")
-    forwarded_hashID, _ := strconv.ParseUint(req.Params.(string), 16, 64)  // 16 is base repr. of string, 64 is uint size
+    params := req.Params.([]interface{})
+    forwarded_hashID, _ := strconv.ParseUint(params[0].(string), 16, 64)  // 16 is base repr. of string, 64 is uint size
+    predecessor := params[1].(string)
     
     return_triplets := make([]interface{}, 0)
     triplets := node.Dict3
     
     // Loop through successor keys and check if key# is inChordRange between successor# and node#
     for _, value := range node.Keys {
-        if (inChordRange(value, node.HashID, forwarded_hashID, node.M)) {
+        if (inChordRange(value, generateNodeHash(predecessor, node.M), forwarded_hashID, node.M)) {
             queryResult := query_hash(value, triplets)
             if len(queryResult) != 0 {
                 for i := range queryResult {
@@ -401,19 +403,35 @@ func (node *ChordNode)join(netAddr string) {
     encoder.Encode(m)
     res := new(Response)
     decoder.Decode(&res)
-    node.Successor = res.Result.(string)
+    joined_successor := res.Result.(string)
+    
+    // Ask the successor for its predecessor
+    successor_encoder, successor_decoder := createConnection(joined_successor)
+    if (successor_encoder == nil && successor_decoder == nil) { // Something went wrong
+        fmt.Println("Could not connect to current node's successor to get its predecessor.")
+        os.Exit(1)
+        return
+    }
+    
+    m = Request{"get_predecessor", nil}
+    successor_encoder.Encode(m)
+    res = new(Response)
+    successor_decoder.Decode(&res)
+    successor_predecessor := res.Result.(string)
+    
+    node.Successor = joined_successor // Delayed assignment: We need the predecessor for the transfer_keys_on_join method
     
     node.drop_database_data()
     
 	// Ask successor for all DICT3 data we should take from him
-    successor_encoder, successor_decoder := createConnection(node.Successor)
+    successor_encoder, successor_decoder = createConnection(node.Successor)
     if (successor_encoder == nil && successor_decoder == nil) { // Something went wrong
         fmt.Println("Could not connect to current node's successor to take necessary keys and Dict3 data.")
         os.Exit(1)
         return
     }
     
-    m = Request{"transfer_keys_on_join", strconv.FormatUint(node.HashID, 16)} //16 means 'hex'
+    m = Request{"transfer_keys_on_join", []string{strconv.FormatUint(node.HashID, 16), successor_predecessor}} //16 means 'hex'
     successor_encoder.Encode(m)
     res = new(Response)
     successor_decoder.Decode(&res)
