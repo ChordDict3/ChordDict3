@@ -1206,11 +1206,7 @@ func (n *ChordNode)shutdown(req *Request, encoder *json.Encoder) {
             os.Exit(1)
             return
         }
-        if (successor == predecessor) { // If there are only two nodes right now
-            m = Request{"set_predecessor_and_respond", ""}
-        } else {
-            m = Request{"set_predecessor_and_respond", predecessor}
-        }
+        m = Request{"set_predecessor_and_respond", ""}
         successor_encoder.Encode(m)
         res = new(Response)
         successor_decoder.Decode(&res)
