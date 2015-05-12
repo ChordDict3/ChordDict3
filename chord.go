@@ -414,6 +414,9 @@ func (node *ChordNode)join(netAddr string) {
     res = new(Response)
     successor_decoder.Decode(&res)
     successor_predecessor := res.Result.(string)
+    if (successor_predecessor == "") {
+        successor_predecessor = joined_successor
+    }
     
     node.Successor = joined_successor // Delayed assignment: We need the predecessor for the transfer_keys_on_join method
     
