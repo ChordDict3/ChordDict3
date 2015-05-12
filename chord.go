@@ -340,7 +340,7 @@ func (node *ChordNode)transfer_keys_on_join(req *Request, encoder *json.Encoder)
     
     // Loop through successor keys and check if key# <= node# OR if key# > successor#
     for _, value := range node.Keys {
-        if (value <= forwarded_hashID || value > node.HashID) {
+        if (value <= forwarded_hashID || inChordRange(value, node.HashID, forwarded_hashID, node.M)) {
             queryResult := query_hash(value, triplets)
             if len(queryResult) != 0 {
                 for i := range queryResult {
