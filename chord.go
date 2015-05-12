@@ -25,6 +25,7 @@ type ChordNode struct{
 	M uint64 
 	Dict3 *db.Col
 	Keys []uint64
+    Database *db.DB
 }
 
 type Request struct{
@@ -176,8 +177,70 @@ func create(config Configuration) *ChordNode{
 		M: config.M,
 		Dict3: triplets,
         Keys: make([]uint64, 0),
+        Database: myDB,
 	}
+    c.populate_keys()
 	return &c
+}
+
+func (node *ChordNode)populate_keys() {
+
+    var query interface{}
+    
+    triplets := node.Dict3
+
+	json.Unmarshal([]byte(`{"has": ["hash"]}`), &query)
+
+	q_result := make(map[int]struct{})
+
+	if err := db.EvalQuery(query, triplets, &q_result); err != nil {
+		panic(err)
+	}
+
+	if len(q_result) != 0 {
+        for i := range q_result {
+            readBack, err := triplets.Read(i)
+            if err != nil {
+                panic(err)
+            }
+            key := readBack["key"].(string)
+            rel := readBack["rel"].(string)
+            node.Keys = append(node.Keys, generateKeyRelHash(key, rel, node.M))
+        }
+    }
+}
+
+func (node *ChordNode)drop_database_data() {
+    var query interface{}
+    
+    triplets := node.Dict3
+
+	json.Unmarshal([]byte(`{"has": ["hash"]}`), &query)
+
+	q_result := make(map[int]struct{})
+
+	if err := db.EvalQuery(query, triplets, &q_result); err != nil {
+		panic(err)
+	}
+
+	if len(q_result) != 0 {
+        for i := range q_result {
+            readBack, err := triplets.Read(i)
+            if err != nil {
+                panic(err)
+            }
+            if err := triplets.Delete(i); err != nil {
+                panic(err)
+            }
+            
+            // Delete hash from node's Keys
+            hash, _ := strconv.ParseUint(readBack["hash"].(string), 16, 64)	// 16 is base repr. of string, 64 is uint size
+            keyRelHashIndex := node.find_key(hash)
+            if (keyRelHashIndex > -1) {
+                node.Keys = append(node.Keys[:keyRelHashIndex], node.Keys[keyRelHashIndex+1:]...)
+            }
+        }
+    }
 }
 
 //Determines if target hash is in a slice of the chord ring
@@ -338,6 +401,8 @@ func (node *ChordNode)join(netAddr string) {
     res := new(Response)
     decoder.Decode(&res)
     node.Successor = res.Result.(string)
+    
+    node.drop_database_data()
     
 	// Ask successor for all DICT3 data we should take from him
     successor_encoder, successor_decoder := createConnection(node.Successor)
@@ -1112,10 +1177,8 @@ func (n *ChordNode)shutdown(req *Request, encoder *json.Encoder) {
     // Set the node's successor to nothing
     n.Successor = ""
     
-    // If this is the only node in the ring
-    if (predecessor == "" && successor == n.Me) {
-        // TODO: dump database
-    } else {
+    // If this is not the only node in the ring
+    if (predecessor != "" && successor != n.Me) {
         // Copy all keys and Dict3 triplets from node to successor        
         successor_triplets := make([]interface{}, 0)
         triplets := n.Dict3
@@ -1176,6 +1239,7 @@ func (n *ChordNode)shutdown(req *Request, encoder *json.Encoder) {
     }
     
 	n.Keys = make([]uint64, 0)
+    n.Database.Close()
     os.Exit(0)
     return
 }
@@ -1268,15 +1332,11 @@ func main() {
 			fmt.Println("node successor: "+node.Successor)
 			fmt.Println("node predecessor: "+node.Predecessor)
 			fmt.Println("node hashID: ", node.HashID)
-			node.fix_fingers()
-			fmt.Println("fingertable[0]: ", node.FingerTable[0])
-			fmt.Println("fingertable[1]: ", node.FingerTable[1])
-			fmt.Println("fingertable[2]: ", node.FingerTable[2])
 
 			_ = t
 		}
 	}()
-/*
+
 	ticker2 := time.NewTicker(time.Millisecond * 20000)
 	go func() {
 		for t2 := range ticker2.C {
@@ -1288,7 +1348,7 @@ func main() {
 			_ = t2
 		}
 	}()
-*/
+
     //Listen for a connection
     for {
     	conn, err := l.Accept() // this blocks until connection or error
