@@ -64,7 +64,6 @@ type DictValue struct {
 //////////////////
 //create connection to other nodes
 func createConnection(netAddr string) (encoder *json.Encoder, decoder *json.Decoder){
-	//fmt.Println("Creating connection to ", netAddr)
 	conn, err := net.Dial("tcp", netAddr)
 
 	if err != nil {
@@ -314,7 +313,6 @@ func (node *ChordNode)set_successor(req *Request, encoder *json.Encoder){
 }
 
 func (node *ChordNode)transfer_keys_on_shutdown(req *Request, encoder *json.Encoder) {    
-    fmt.Println("entered transfer_keys_on_shutdown")
     forwarded_triplets := req.Params.([]interface{})
     
     for _, t := range forwarded_triplets {
@@ -332,7 +330,6 @@ func (node *ChordNode)transfer_keys_on_shutdown(req *Request, encoder *json.Enco
 }
 
 func (node *ChordNode)transfer_keys_on_join(req *Request, encoder *json.Encoder) {
-    fmt.Println("entered transfer_keys_on_join")
     params := req.Params.([]interface{})
     forwarded_hashID, _ := strconv.ParseUint(params[0].(string), 16, 64)  // 16 is base repr. of string, 64 is uint size
     predecessor := params[1].(string)
@@ -389,7 +386,6 @@ func (node *ChordNode) create() error {
 
 //join an existing chord ring containing node with identifier
 func (node *ChordNode)join(netAddr string) {
-	fmt.Println("entered join")
 	node.Predecessor = ""
 
 	encoder, decoder := createConnection(netAddr)
@@ -470,7 +466,6 @@ func (node *ChordNode)find_successor(req *Request, encoder *json.Encoder) {
             os.Exit(1)
             return
         }
-      //  fmt.Println("Looking for successor")
         m := Request{"find_successor", netAddr}
         encoder2.Encode(m)
         res := new(Response)
@@ -779,8 +774,6 @@ func (node *ChordNode) find_key(key uint64) int {
 }
 
 func (n *ChordNode)listids(req *Request, encoder *json.Encoder) {
-	fmt.Println("entering listids")
-	
 	method := req.Method
 	if (method == "listids_internal") {
 		if (req.Params.(string) == n.Me) {
@@ -841,7 +834,6 @@ func (n *ChordNode)listids(req *Request, encoder *json.Encoder) {
 }
 
 func (n *ChordNode)listkeys(req *Request, encoder *json.Encoder) {
-	fmt.Println("entering listkeys")
 	
 	method := req.Method
 	if (method == "listkeys_internal") {
@@ -873,7 +865,6 @@ func (n *ChordNode)listkeys(req *Request, encoder *json.Encoder) {
 		
 		key_set[readBack["key"].(string)] = true
 	}
-	fmt.Println(key_set)
 	
 	resultList := make([]string, 0)
 	for i := range key_set{
@@ -1047,7 +1038,6 @@ func (n *ChordNode)lookup_relonly(req *Request, encoder *json.Encoder) {
 			notMyHashes = append(notMyHashes, elem)
 		}
 	}
-	fmt.Println(notMyHashes)
 	if (len(notMyHashes) > 0) {		// only forward if hashes remain
 		successor := n.get_successor_of_hash(notMyHashes[0])
 		forwardEncoder, decoder := createConnection(successor)
@@ -1090,7 +1080,6 @@ func (n *ChordNode)lookup_relonly_internal(req *Request, encoder *json.Encoder) 
 			notMyHashes = append(notMyHashes, elem)
 		}
 	}
-	fmt.Println(notMyHashes)
 	if (len(notMyHashes) > 0) {		// only forward if hashes remain
 		successor := n.get_successor_of_hash(notMyHashes[0])
 		forwardEncoder, decoder := createConnection(successor)
@@ -1117,7 +1106,6 @@ func (n *ChordNode)lookup_relonly_internal(req *Request, encoder *json.Encoder) 
 
 
 func (node *ChordNode)purge(period string) {
-	fmt.Println("entering purge")
 	triplets := node.Dict3
 
 	duration, _ := time.ParseDuration("-" + period + "s")
@@ -1218,7 +1206,6 @@ func (n *ChordNode)delete(req *Request, encoder *json.Encoder){
 }
 
 func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
-	fmt.Println("entering insert")
 	triplets := n.Dict3
 
 	p := req.Params
@@ -1233,10 +1220,8 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 	}
 
 	keyRelHash := generateKeyRelHash(key, rel, n.M)
-	fmt.Printf("keyRelHash: %b\n", keyRelHash)
 	// get successor; if Me, then insert into DB, else forward
 	successor := n.get_successor_of_hash(keyRelHash)
-	fmt.Println("successor: " + successor)
     
 	if (successor != n.Me) {
         forwardEncoder, decoder := createConnection(successor)
