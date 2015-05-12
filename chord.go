@@ -740,10 +740,11 @@ func query_hash(hash uint64, triplets *db.Col) (queryResult map[int]struct{}) {
 }
 
 func (node *ChordNode)closest_preceding_node(hash uint64) string {
-	for i := node.M-1; i >= 0; i-- {
-		if(node.FingerTable[i] != "") {
-			if(inChordRange(generateNodeHash(node.FingerTable[i], node.M), generateNodeHash(node.Me, node.M), hash, node.M)) {
-				return node.FingerTable[i]
+	//for i := node.M-1; i >= 0; i-- {
+	for i:=node.M; i>=1; i-- {
+		if(node.FingerTable[i-1] != "") {
+			if(inChordRange(generateNodeHash(node.FingerTable[i-1], node.M), generateNodeHash(node.Me, node.M), hash, node.M)) {
+				return node.FingerTable[i-1]
 			}
 		}
 	}
@@ -758,6 +759,48 @@ func (node *ChordNode) find_key(key uint64) int {
     }
     return -1
 }
+
+func (n *ChordNode)listkeys(req *Request, encoder *json.Encoder) {
+	fmt.Println("entering listkeys")
+
+	triplets := n.Dict3
+	
+	
+	var query interface{}
+	json.Unmarshal([]byte(`{"n": [{"has": ["key"]}, {"has": ["rel"]}]}`), &query)
+
+	queryResult := make(map[int]struct{}) // query result (document IDs) goes into map keys
+
+	if err := db.EvalQuery(query, triplets, &queryResult); err != nil {
+		panic(err)
+	}
+
+	key_set := make(map[string]bool)
+
+	// Query result are document IDs
+	for id := range queryResult {
+		readBack, err := triplets.Read(id)
+		if err != nil {
+			panic(err)
+		}
+		
+		key_set[readBack["key"].(string)] = true
+	}
+	fmt.Println(key_set)
+	
+	val := make([]string, 0)
+	for i := range key_set{
+		val = append(val,i)
+	}
+	
+	m := Response{val, nil}
+	encoder.Encode(m)
+
+}
+
+
+
+
 
 func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
 	triplets := n.Dict3
@@ -815,7 +858,7 @@ func (n *ChordNode)lookup_keyonly(req *Request, encoder *json.Encoder) {
 	arr := p.([]interface{})
 	key := arr[0].(string)
 	
-	//begin building result list of satisfied keys
+	//begin building result listof satisfied keys
 	resultList := n.query_key(key)
 	
 	keyPartialHashes := generateKeyPartialHashes(key, n.M)
@@ -1242,10 +1285,10 @@ func handleConnection(node *ChordNode, conn net.Conn){
 	decoder.Decode(&req)
 
 	switch(req.Method) {
-    case "transfer_keys_on_shutdown" :
-        node.transfer_keys_on_shutdown(req, encoder)
-    case "transfer_keys_on_join" :
-        node.transfer_keys_on_join(req, encoder)
+	case "transfer_keys_on_shutdown" :
+		node.transfer_keys_on_shutdown(req, encoder)
+	case "transfer_keys_on_join" :
+		node.transfer_keys_on_join(req, encoder)
 	case "find_successor" :
 		node.find_successor(req, encoder)
 	case "get_successor" :
@@ -1256,15 +1299,15 @@ func handleConnection(node *ChordNode, conn net.Conn){
 		node.set_successor(req, encoder)
 	case "set_predecessor" :
 		node.set_predecessor(req, encoder)
-    case "set_predecessor_and_respond" :
-        node.set_predecessor_and_respond(req, encoder)
+	case "set_predecessor_and_respond" :
+		node.set_predecessor_and_respond(req, encoder)
 	case "notify" :
 		node.notify(req, encoder)
-    case "successor_of_hash_rpc" :
-        node.successor_of_hash_rpc(req, encoder)
-    case "fix_fingers" :
-        node.fix_fingers()
-        encoder.Encode(Response{nil, nil})
+	case "successor_of_hash_rpc" :
+		node.successor_of_hash_rpc(req, encoder)
+	case "fix_fingers" :
+		node.fix_fingers()
+		encoder.Encode(Response{nil, nil})
 	case "lookup" :
 		node.lookup(req, encoder)
 	case "lookup_keyonly_internal" :
@@ -1277,6 +1320,10 @@ func handleConnection(node *ChordNode, conn net.Conn){
 		node.insert(req, encoder, true)
 	case "delete" :
 		node.delete(req, encoder)
+	case "listkeys" :
+		node.listkeys(req, encoder)
+	case "listids" :
+		node.listkeys(req, encoder)
 	case "shutdown" :
 		node.shutdown(req, encoder)
 	}
