@@ -1211,7 +1211,7 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 	val := arr[2]
 	perms := n.Permission
 	if (len(arr) > 3) {
-		perms := arr[3].(string)
+		perms = arr[3].(string)
 	}
 
 	keyRelHash := generateKeyRelHash(key, rel, n.M)
