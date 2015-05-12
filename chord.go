@@ -576,7 +576,7 @@ func (node *ChordNode)updateTripletValue(docId int, key string, rel string, val 
 }
 
 func (node *ChordNode)successor_of_hash_rpc(req *Request, encoder *json.Encoder) {
-	fmt.Println("in succ of hash")
+	//fmt.Println("in succ of hash")
 	hash, _ := strconv.ParseUint(req.Params.(string), 16, 64)  // 16 is base repr. of string, 64 is uint size
 	//	hash := uint64(req.Params.(float64))
 	retval := ""
@@ -603,7 +603,7 @@ func (node *ChordNode)successor_of_hash_rpc(req *Request, encoder *json.Encoder)
         encoder2.Encode(m)
         res := new(Response)
         decoder2.Decode(&res)
-        fmt.Println("successor of hash is: ", res.Result.(string))
+       // fmt.Println("successor of hash is: ", res.Result.(string))
         encoder.Encode(res)
 	}
 }
@@ -1386,7 +1386,7 @@ func main() {
 	fmt.Println("node successor: "+node.Successor)
 	fmt.Println("node hashID: ", node.HashID)
 
-	fmt.Println("Setting up a listener...")
+	//fmt.Println("Setting up a listener...")
 	
 	l, err := net.Listen(config.Protocol, node.Me)
 	if err != nil {
@@ -1400,10 +1400,10 @@ func main() {
 	go func() {
 		for t := range ticker.C {
 			node.stabilize()
-			fmt.Println("node identifier: "+node.Me)
-			fmt.Println("node successor: "+node.Successor)
-			fmt.Println("node predecessor: "+node.Predecessor)
-			fmt.Println("node hashID: ", node.HashID)
+			//fmt.Println("node identifier: "+node.Me)
+			//fmt.Println("node successor: "+node.Successor)
+			//fmt.Println("node predecessor: "+node.Predecessor)
+			//fmt.Println("node hashID: ", node.HashID)
 
 			_ = t
 		}
@@ -1413,13 +1413,28 @@ func main() {
 	go func() {
 		for t2 := range ticker2.C {
 			node.fix_fingers()
-			fmt.Println("fingertable[0]: ", node.FingerTable[0])
-			fmt.Println("fingertable[1]: ", node.FingerTable[1])
-			fmt.Println("fingertable[2]: ", node.FingerTable[2])
+			//fmt.Println("fingertable[0]: ", node.FingerTable[0])
+			//fmt.Println("fingertable[1]: ", node.FingerTable[1])
+			//fmt.Println("fingertable[2]: ", node.FingerTable[2])
 
 			_ = t2
 		}
 	}()
+
+	//print chord status information every 60 seconds
+	ticker3 := time.NewTicker(time.Millisecond * 60000)
+	go func() {
+		for t3 := range ticker3.C {
+			fmt.Println("me: "+node.Me)
+			fmt.Println("successor: "+node.Successor)
+			fmt.Println("predecessor: "+node.Predecessor)
+			fmt.Println("hashID: ", node.HashID)
+			for i:=uint64(0); i<node.M; i++ {
+				fmt.Println("FingerTable[",i,"]: ", node.FingerTable[i])
+			}
+
+			_ = t3
+		
 
 	//ticker for purge()
 	duration, _ := time.ParseDuration(config.TTL + "s")
