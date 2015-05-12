@@ -1462,7 +1462,7 @@ func main() {
 	fmt.Println("Listening on ", node.Me)	
 
 	//ticker for stabilize
-	ticker := time.NewTicker(time.Millisecond * 5000)
+	ticker := time.NewTicker(time.Millisecond * 2000)
 	go func() {
 		for t := range ticker.C {
 			node.stabilize()
@@ -1475,7 +1475,7 @@ func main() {
 		}
 	}()
 
-	ticker2 := time.NewTicker(time.Millisecond * 20000)
+	ticker2 := time.NewTicker(time.Millisecond * 5000)
 	go func() {
 		for t2 := range ticker2.C {
 			node.fix_fingers()
