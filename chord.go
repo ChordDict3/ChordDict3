@@ -274,9 +274,9 @@ func (node *ChordNode)transfer_keys_on_join(req *Request, encoder *json.Encoder)
     return_triplets := make([]interface{}, 0)
     triplets := node.Dict3
     
-    // Loop through successor keys and check if key# <= node#
+    // Loop through successor keys and check if key# <= node# OR if key# > successor#
     for _, value := range node.Keys {
-        if (value <= forwarded_hashID) {
+        if (value <= forwarded_hashID || value > node.HashID) {
             queryResult := query_hash(value, triplets)
             if len(queryResult) != 0 {
                 for i := range queryResult {
@@ -659,8 +659,10 @@ func query_key_rel(key string, rel string, triplets *db.Col) (queryResult map[in
 func query_hash(hash uint64, triplets *db.Col) (queryResult map[int]struct{}) {
 
     var query interface{}
+    
+    hash_string := strconv.FormatUint(hash, 16) //16 means 'hex'
 
-	json.Unmarshal([]byte(`{"eq": hash, "in": ["hash"]}`), &query)
+	json.Unmarshal([]byte(`{"eq": "` + hash_string + `", "in": ["hash"]}`), &query)
 
 	q_result := make(map[int]struct{}) // query result (document IDs) goes into map keys
 
