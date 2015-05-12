@@ -1209,7 +1209,10 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 	key := arr[0].(string)
 	rel := arr[1].(string)
 	val := arr[2]
-	perms := n.Permission 
+	perms := n.Permission
+	if (len(arr) > 3) {
+		perms := arr[3].(string)
+	}
 
 	keyRelHash := generateKeyRelHash(key, rel, n.M)
 	fmt.Printf("keyRelHash: %b\n", keyRelHash)
