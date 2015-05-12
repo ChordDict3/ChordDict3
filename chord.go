@@ -762,6 +762,14 @@ func (node *ChordNode) find_key(key uint64) int {
 
 func (n *ChordNode)listids(req *Request, encoder *json.Encoder) {
 	fmt.Println("entering listids")
+	
+	method := req.Method
+	if (method == "listids_internal") {
+		if (req.Params.(string) == n.Me) {
+			encoder.Encode(Response{nil, nil})
+			return
+		}
+	}
 
 	triplets := n.Dict3
 	
@@ -788,16 +796,30 @@ func (n *ChordNode)listids(req *Request, encoder *json.Encoder) {
 		id_set[[2]string{readBack["key"].(string), readBack["rel"].(string)}] = true 
 	}
 
-	val := make([]interface{}, 0)
+	resultList := make([]interface{}, 0)
 	for i := range id_set{
-		//fmt.Println(i)
-		val = append(val, i)
+		resultList = append(resultList,i)
 	}
-		
-	m := Response{val, nil}
-	encoder.Encode(m)
 	
-
+	fwdReq := req
+	if method != "listids_internal" {
+		fwdReq = &Request{"listids_internal", n.Me}
+	}
+	fwdEnc, fwdDec := createConnection(n.Successor)
+	fwdEnc.Encode(fwdReq)
+	fwdResp := new(Response)
+	fwdDec.Decode(&fwdResp)
+	
+	forwardedResults := fwdResp.Result
+	if (forwardedResults != nil) {
+		fArr := forwardedResults.([]interface{})
+		for _, result := range fArr {
+			resultList = append(resultList, result)
+		}
+	}
+	
+	m := Response{resultList, nil}
+	encoder.Encode(m)
 }
 
 func (n *ChordNode)listkeys(req *Request, encoder *json.Encoder) {
@@ -805,7 +827,6 @@ func (n *ChordNode)listkeys(req *Request, encoder *json.Encoder) {
 	
 	method := req.Method
 	if (method == "listkeys_internal") {
-		fmt.Println(req)
 		if (req.Params.(string) == n.Me) {
 			encoder.Encode(Response{nil, nil})
 			return
@@ -1385,6 +1406,8 @@ func handleConnection(node *ChordNode, conn net.Conn){
 	case "listkeys_internal" :
 		node.listkeys(req, encoder)
 	case "listids" :
+		node.listids(req, encoder)
+	case "listids_internal" :
 		node.listids(req, encoder)
 	case "shutdown" :
 		node.shutdown(req, encoder)
