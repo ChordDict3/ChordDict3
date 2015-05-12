@@ -909,62 +909,7 @@ func (n *ChordNode)lookup_relonly_internal(req *Request, encoder *json.Encoder) 
 	resp := Response{resultList, nil}
 	encoder.Encode(resp)
 }
-<<<<<<< HEAD
 
-//needs a time to purge 'older than' entries
-//key:nil rel:nil value: date to purge after
-//sample date "2015-05-08T16:55:55.326107309-04:00"
-func (n *ChordNode)purge(req *Request, encoder *json.Encoder){
-
-	fmt.Println("entering purge")
-	triplets := n.Dict3
-	
-	p := req.Params
-	arr := p.([]interface{})
-
-	val := arr[2].(string)
-	
-	time_int, err := strconv.ParseInt(val, 10, 64) 
-	if err != nil {
-		panic(err)
-	}
-	
-	purge_time := time.Unix(time_int, 0)
-	purge_list := make([]int, 0)
-	
-	triplets.ForEachDoc(func(id int, docContent []byte) (willMoveOn bool) {
-		fmt.Println("Document", id, "is", string(docContent))
-
-		readBack, err := triplets.Read(id)
-		if err != nil {
-			panic(err)
-		}
-			
-		dictVal := readBack["val"].(map[string]interface{})
-		//Check permissions before deleting, can't delete if "R"
-		accessed_time := int64(dictVal["Accessed"].(float64))
-		
-		if time.Unix(accessed_time, 0).Before(purge_time) {
-			purge_list = append(purge_list, id)
-		}
-		
-		return true  // move on to the next document OR
-	})
-
-	fmt.Println("triplets to purge")
-	for i := 0; i < len(purge_list); i++ {
-		readBack, err := triplets.Read(purge_list[i])
-		if err != nil {
-			panic(err)
-		}
-			
-	 	dictVal := readBack["val"].(map[string]interface{})
-		//Check permissions before deleting, can't delete if "R"
-		if dictVal["Permission"] == "RW" {
-			fmt.Println("deleting ", purge_list[i])
-			if err := triplets.Delete(purge_list[i]); err != nil {
-				panic(err)
-=======
 
 
 func (node *ChordNode)purge(period string) {
@@ -1019,7 +964,7 @@ func (node *ChordNode)purge(period string) {
 		}
 	}
 }
-
+			
 
 func (n *ChordNode)delete(req *Request, encoder *json.Encoder){
 	triplets := n.Dict3
