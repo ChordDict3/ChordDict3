@@ -838,10 +838,6 @@ func (n *ChordNode)listkeys(req *Request, encoder *json.Encoder) {
 
 }
 
-
-
-
-
 func (n *ChordNode)lookup(req *Request, encoder *json.Encoder) {
 	triplets := n.Dict3
 
@@ -902,18 +898,18 @@ func (n *ChordNode)lookup_keyonly(req *Request, encoder *json.Encoder) {
 	resultList := n.query_key(key)
 	
 	keyPartialHashes := generateKeyPartialHashes(key, n.M)
-	for (n.get_successor_of_hash(keyPartialHashes[0]) == n.Me) {
-		keyPartialHashes = keyPartialHashes[1:]
-		if (len(keyPartialHashes) == 0) {
-			break
+	notMyHashes := make([]uint64, 0)
+	for _, elem := range keyPartialHashes {
+		if (n.get_successor_of_hash(elem) != n.Me) {
+			notMyHashes = append(notMyHashes, elem)
 		}
 	}
-	if (len(keyPartialHashes) > 0) {		// only forward if hashes remain
-		successor := n.get_successor_of_hash(keyPartialHashes[0])
+	if (len(notMyHashes) > 0) {		// only forward if hashes remain
+		successor := n.get_successor_of_hash(notMyHashes[0])
 		forwardEncoder, decoder := createConnection(successor)
 		forwardedParams := make([]interface{}, 2)
 		forwardedParams[0] = key
-		forwardedParams[1] = keyPartialHashes
+		forwardedParams[1] = notMyHashes
 		req := Request{Method: "lookup_keyonly_internal", Params: forwardedParams}
 		forwardEncoder.Encode(req)
 		forwardedResponse := new(Response)
@@ -944,19 +940,18 @@ func (n *ChordNode)lookup_keyonly_internal(req *Request, encoder *json.Encoder) 
 	
 	resultList := n.query_key(key)
 	
-	for (n.get_successor_of_hash(keyPartialHashes[0]) == n.Me) {
-		keyPartialHashes = keyPartialHashes[1:]
-		if (len(keyPartialHashes) == 0) {
-			break
+	notMyHashes := make([]uint64, 0)
+	for _, elem := range keyPartialHashes {
+		if (n.get_successor_of_hash(elem) != n.Me) {
+			notMyHashes = append(notMyHashes, elem)
 		}
 	}
-
-	if (len(keyPartialHashes) > 0) {		// only forward if hashes remain
-		successor := n.get_successor_of_hash(keyPartialHashes[0])
+	if (len(notMyHashes) > 0) {		// only forward if hashes remain
+		successor := n.get_successor_of_hash(notMyHashes[0])
 		forwardEncoder, decoder := createConnection(successor)
 		forwardedParams := make([]interface{}, 2)
 		forwardedParams[0] = key
-		forwardedParams[1] = keyPartialHashes
+		forwardedParams[1] = notMyHashes
 		req := Request{Method: "lookup_keyonly_internal", Params: forwardedParams}
 		forwardEncoder.Encode(req)
 		forwardedResponse := new(Response)
@@ -983,18 +978,19 @@ func (n *ChordNode)lookup_relonly(req *Request, encoder *json.Encoder) {
 	resultList := n.query_rel(rel)
 	
 	relPartialHashes := generateRelPartialHashes(rel, n.M)
-	for (n.get_successor_of_hash(relPartialHashes[0]) == n.Me) {
-		relPartialHashes = relPartialHashes[1:]
-		if (len(relPartialHashes) == 0) {
-			break
+	notMyHashes := make([]uint64, 0)
+	for _, elem := range relPartialHashes {
+		if (n.get_successor_of_hash(elem) != n.Me) {
+			notMyHashes = append(notMyHashes, elem)
 		}
 	}
-	if (len(relPartialHashes) > 0) {		// only forward if hashes remain
-		successor := n.get_successor_of_hash(relPartialHashes[0])
+	fmt.Println(notMyHashes)
+	if (len(notMyHashes) > 0) {		// only forward if hashes remain
+		successor := n.get_successor_of_hash(notMyHashes[0])
 		forwardEncoder, decoder := createConnection(successor)
 		forwardedParams := make([]interface{}, 2)
 		forwardedParams[0] = rel
-		forwardedParams[1] = relPartialHashes
+		forwardedParams[1] = notMyHashes
 		req := Request{Method: "lookup_relonly_internal", Params: forwardedParams}
 		forwardEncoder.Encode(req)
 		forwardedResponse := new(Response)
@@ -1025,19 +1021,19 @@ func (n *ChordNode)lookup_relonly_internal(req *Request, encoder *json.Encoder) 
 	
 	resultList := n.query_rel(rel)
 	
-	for (n.get_successor_of_hash(relPartialHashes[0]) == n.Me) {
-		relPartialHashes = relPartialHashes[1:]
-		if (len(relPartialHashes) == 0) {
-			break
+	notMyHashes := make([]uint64, 0)
+	for _, elem := range relPartialHashes {
+		if (n.get_successor_of_hash(elem) != n.Me) {
+			notMyHashes = append(notMyHashes, elem)
 		}
 	}
-
-	if (len(relPartialHashes) > 0) {		// only forward if hashes remain
-		successor := n.get_successor_of_hash(relPartialHashes[0])
+	fmt.Println(notMyHashes)
+	if (len(notMyHashes) > 0) {		// only forward if hashes remain
+		successor := n.get_successor_of_hash(notMyHashes[0])
 		forwardEncoder, decoder := createConnection(successor)
 		forwardedParams := make([]interface{}, 2)
 		forwardedParams[0] = rel
-		forwardedParams[1] = relPartialHashes
+		forwardedParams[1] = notMyHashes
 		req := Request{Method: "lookup_relonly_internal", Params: forwardedParams}
 		forwardEncoder.Encode(req)
 		forwardedResponse := new(Response)
@@ -1432,17 +1428,18 @@ func main() {
 			for i:=uint64(0); i<node.M; i++ {
 				fmt.Println("FingerTable[",i,"]: ", node.FingerTable[i])
 			}
-
 			_ = t3
+		}
+	}()
 		
 
 	//ticker for purge()
 	duration, _ := time.ParseDuration(config.TTL + "s")
-	ticker3 := time.NewTicker(duration)
+	ticker4 := time.NewTicker(duration)
 	go func() {
-		for t3 := range ticker3.C {
+		for t4 := range ticker4.C {
 			node.purge(config.TTL)
-			_ = t3
+			_ = t4
 		}
 	}()
 
