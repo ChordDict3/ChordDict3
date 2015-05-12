@@ -25,6 +25,7 @@ type ChordNode struct{
 	M uint64 
 	Dict3 *db.Col
 	Keys []uint64
+	Permission string
 }
 
 type Request struct{
@@ -46,6 +47,8 @@ type Configuration struct{
 	PersistentStorageContainer struct {
 		File string `json:"file"`
 	} `json:"persistentStorageContainer"`
+	TTL string `json:"ttl"`
+	Permission string `json"permission"`
 	Methods []string `json:"methods"`
 }
 
@@ -175,7 +178,8 @@ func create(config Configuration) *ChordNode{
 		HashID: hash,
 		M: config.M,
 		Dict3: triplets,
-        Keys: make([]uint64, 0),
+		Keys: make([]uint64, 0),
+		Permission: config.Permission,
 	}
 	return &c
 }
@@ -905,6 +909,7 @@ func (n *ChordNode)lookup_relonly_internal(req *Request, encoder *json.Encoder) 
 	resp := Response{resultList, nil}
 	encoder.Encode(resp)
 }
+<<<<<<< HEAD
 
 //needs a time to purge 'older than' entries
 //key:nil rel:nil value: date to purge after
@@ -959,17 +964,62 @@ func (n *ChordNode)purge(req *Request, encoder *json.Encoder){
 			fmt.Println("deleting ", purge_list[i])
 			if err := triplets.Delete(purge_list[i]); err != nil {
 				panic(err)
+=======
+
+
+func (node *ChordNode)purge(period string) {
+	fmt.Println("entering purge")
+	triplets := node.Dict3
+
+	duration, _ := time.ParseDuration("-" + period + "s")
+	
+	purge_time := time.Now().Add(duration)
+	purge_list := make([]int, 0)
+
+	triplets.ForEachDoc(func(id int, docContent []byte) (willMoveOn bool) {
+		//fmt.Println("Document", id, "is", string(docContent))
+
+		readBack, err := triplets.Read(id)
+		if err != nil {
+			panic(err)
+		}
+			
+		dictVal := readBack["val"].(map[string]interface{})
+		//Check permissions before deleting, can't delete if "R"
+		accessed_time := int64(dictVal["Accessed"].(float64))
+		
+		if time.Unix(accessed_time, 0).Before(purge_time) && dictVal["Permission"] == "RW" {
+			purge_list = append(purge_list, id)
+		}
+		
+		return true  // move on to the next document OR
+	})
+
+	//fmt.Println("triplets to purge")
+	for i := 0; i < len(purge_list); i++ {
+		readBack, err := triplets.Read(purge_list[i])
+		if err != nil {
+			panic(err)
+		}
+			
+	 	dictVal := readBack["val"].(map[string]interface{})
+		//Check permissions before deleting, can't delete if "R"
+		if dictVal["Permission"] == "RW" {
+			fmt.Println("deleting ", purge_list[i])
+			if err := triplets.Delete(purge_list[i]); err != nil {
+				panic(err)
 			}
-            
-            // Delete hash from node's Keys
+
+			// Delete hash from node's Keys
 			hash, _ := strconv.ParseUint(readBack["hash"].(string), 16, 64)	// 16 is base repr. of string, 64 is uint size
-            keyRelHashIndex := n.find_key(hash)
-            if (keyRelHashIndex > -1) {
-                n.Keys = append(n.Keys[:keyRelHashIndex], n.Keys[keyRelHashIndex+1:]...)
-            }
+			keyRelHashIndex := node.find_key(hash)
+			if (keyRelHashIndex > -1) {
+				node.Keys = append(node.Keys[:keyRelHashIndex], node.Keys[keyRelHashIndex+1:]...)
+			}
 		}
 	}
 }
+
 
 func (n *ChordNode)delete(req *Request, encoder *json.Encoder){
 	triplets := n.Dict3
@@ -1028,10 +1078,7 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 	key := arr[0].(string)
 	rel := arr[1].(string)
 	val := arr[2]
-	perms := "RW"
-	if (len(arr) == 4) {
-		perms = arr[3].(string)
-	}
+	perms := n.Permission 
 
 	keyRelHash := generateKeyRelHash(key, rel, n.M)
 	fmt.Printf("keyRelHash: %b\n", keyRelHash)
@@ -1226,10 +1273,8 @@ func handleConnection(node *ChordNode, conn net.Conn){
 		node.insert(req, encoder, true)
 	case "delete" :
 		node.delete(req, encoder)
-	case "purge" :
-		node.purge(req, encoder)
-    case "shutdown" :
-        node.shutdown(req, encoder)
+	case "shutdown" :
+		node.shutdown(req, encoder)
 	}
 }
 
@@ -1288,7 +1333,22 @@ func main() {
 			_ = t2
 		}
 	}()
+
 */
+
+
+
+	//ticker for purge()
+	duration, _ := time.ParseDuration(config.TTL + "s")
+	ticker3 := time.NewTicker(duration)
+	go func() {
+		for t3 := range ticker3.C {
+			node.purge(config.TTL)
+			_ = t3
+		}
+	}()
+
+	
     //Listen for a connection
     for {
     	conn, err := l.Accept() // this blocks until connection or error
