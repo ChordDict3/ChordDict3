@@ -338,9 +338,9 @@ func (node *ChordNode)transfer_keys_on_join(req *Request, encoder *json.Encoder)
     return_triplets := make([]interface{}, 0)
     triplets := node.Dict3
     
-    // Loop through successor keys and check if key# <= node# OR if key# is inChordRange between node# and successor#
+    // Loop through successor keys and check if key# is inChordRange between successor# and node#
     for _, value := range node.Keys {
-        if (value <= forwarded_hashID || inChordRange(value, node.HashID, forwarded_hashID, node.M)) {
+        if (inChordRange(value, node.HashID, forwarded_hashID, node.M)) {
             queryResult := query_hash(value, triplets)
             if len(queryResult) != 0 {
                 for i := range queryResult {
