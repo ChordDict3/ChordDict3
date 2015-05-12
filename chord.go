@@ -1154,8 +1154,6 @@ func (n *ChordNode)insert(req *Request, encoder *json.Encoder, update bool){
 }
 
 func (n *ChordNode)shutdown(req *Request, encoder *json.Encoder) {
-    // Get the node's hash ID
-    //hashID := n.HashID
     // Set the hash ID to something unreachable
     n.HashID = powerof(2, n.M) + 1
     
